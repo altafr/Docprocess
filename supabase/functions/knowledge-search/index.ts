@@ -25,11 +25,12 @@ interface SearchResult {
   searchMode: "semantic" | "keyword";
 }
 
-// ── Embedding ─────────────────────────────────────────────────────────────────
+// ── Embedding — 7-second hard timeout ────────────────────────────────────────
 async function getQueryEmbedding(query: string, apiKey: string): Promise<number[] | null> {
+  if (!apiKey) return null;
   try {
-    const ac   = new AbortController();
-    const tid  = setTimeout(() => ac.abort(), 7_000); // 7-second hard limit
+    const ac  = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 7_000);
     try {
       const resp = await fetch(`${MISTRAL_API}/embeddings`, {
         method: "POST",
@@ -45,13 +46,11 @@ async function getQueryEmbedding(query: string, apiKey: string): Promise<number[
   } catch { return null; }
 }
 
-// ── Unified DB row → SearchResult mappers ─────────────────────────────────────
+// ── DB row → SearchResult ─────────────────────────────────────────────────────
 function mapUnifiedRow(row: any, mode: "semantic" | "keyword"): SearchResult {
   const meta: Record<string, string | null> = {};
   if (row.meta && typeof row.meta === "object") {
-    for (const [k, v] of Object.entries(row.meta)) {
-      meta[k] = v != null ? String(v) : null;
-    }
+    for (const [k, v] of Object.entries(row.meta)) meta[k] = v != null ? String(v) : null;
   }
   return {
     id:         row.id,
@@ -83,6 +82,15 @@ function rrfMerge(semantic: SearchResult[], keyword: SearchResult[], k = 60): Se
     .map(({ result, score }) => ({ ...result, rank: Math.min(1, score * k) }));
 }
 
+function mergeResults(
+  sem: SearchResult[],
+  kw: SearchResult[],
+): { results: SearchResult[]; mode: "semantic" | "hybrid" | "keyword" } {
+  if (sem.length > 0 && kw.length > 0) return { results: rrfMerge(sem, kw),                  mode: "hybrid"   };
+  if (sem.length > 0)                  return { results: sem.sort((a, b) => b.rank - a.rank), mode: "semantic" };
+  return                                      { results: kw.sort((a, b) => b.rank - a.rank),  mode: "keyword"  };
+}
+
 // ── RAG context builder ───────────────────────────────────────────────────────
 function buildContext(results: SearchResult[]): string {
   return results.slice(0, 8).map((r, i) => {
@@ -106,6 +114,39 @@ Example: "According to [HSBC Board Resolution](ks://uuid-here/board_resolution),
 
 Format your answer clearly using markdown. If the documents don't contain enough information to answer, say so clearly. Do not invent facts.`;
 
+// ── Shared search logic ───────────────────────────────────────────────────────
+async function runSearch(
+  supabase: ReturnType<typeof createClient>,
+  apiKey: string,
+  sanitized: string,
+  sources_: SourceType[],
+  limit: number,
+): Promise<{ results: SearchResult[]; mode: "semantic" | "hybrid" | "keyword" }> {
+  const [embedding, kwRaw] = await Promise.all([
+    getQueryEmbedding(sanitized, apiKey),
+    supabase.rpc("search_knowledge_keyword", {
+      query_text:    sanitized,
+      source_filter: sources_,
+      result_limit:  limit,
+    }),
+  ]);
+  const kwResults: SearchResult[] = (kwRaw.data ?? []).map((r: any) => mapUnifiedRow(r, "keyword"));
+
+  let semResults: SearchResult[] = [];
+  if (embedding) {
+    const { data: semRaw } = await supabase.rpc("search_knowledge_semantic", {
+      query_embedding: JSON.stringify(embedding),
+      source_filter:   sources_,
+      result_limit:    limit,
+      min_similarity:  0.25,
+    });
+    semResults = (semRaw ?? []).map((r: any) => mapUnifiedRow(r, "semantic"));
+  }
+
+  const { results, mode } = mergeResults(semResults, kwResults);
+  return { results: results.slice(0, limit), mode };
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -120,78 +161,52 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const supabase   = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const apiKey     = Deno.env.get("MISTRAL_API_KEY")!;
-    const sanitized  = query.trim().replace(/['"\\]/g, " ");
+    const supabase  = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const apiKey    = Deno.env.get("MISTRAL_API_KEY") ?? "";
+    const sanitized = query.trim().replace(/['"\\]/g, " ");
     const sources_: SourceType[] = sources ?? ["board_resolution", "processed_document", "company_mandate"];
 
-    // ── Run embedding + keyword search in parallel ──────────────────────────
-    const [embedding, kwRaw] = await Promise.all([
-      getQueryEmbedding(sanitized, apiKey),
-      supabase.rpc("search_knowledge_keyword", {
-        query_text:    sanitized,
-        source_filter: sources_,
-        result_limit:  limit,
-      }),
-    ]);
-
-    const kwResults: SearchResult[] = (kwRaw.data ?? []).map((r: any) => mapUnifiedRow(r, "keyword"));
-
-    // ── Semantic search (only if embedding succeeded) ───────────────────────
-    let semResults: SearchResult[] = [];
-    if (embedding) {
-      const { data: semRaw } = await supabase.rpc("search_knowledge_semantic", {
-        query_embedding: JSON.stringify(embedding),
-        source_filter:   sources_,
-        result_limit:    limit,
-        min_similarity:  0.25,
-      });
-      semResults = (semRaw ?? []).map((r: any) => mapUnifiedRow(r, "semantic"));
-    }
-
-    // ── Merge ───────────────────────────────────────────────────────────────
-    let allResults: SearchResult[];
-    let searchMode: "semantic" | "hybrid" | "keyword";
-
-    if (semResults.length > 0 && kwResults.length > 0) {
-      allResults = rrfMerge(semResults, kwResults);
-      searchMode = "hybrid";
-    } else if (semResults.length > 0) {
-      allResults = semResults.sort((a, b) => b.rank - a.rank);
-      searchMode = "semantic";
-    } else {
-      allResults = kwResults.sort((a, b) => b.rank - a.rank);
-      searchMode = "keyword";
-    }
-
-    const topResults = allResults.slice(0, limit);
-
-    // ── Non-streaming ───────────────────────────────────────────────────────
+    // ── Non-streaming ───────────────────────────────────────────────────────────
     if (!stream) {
+      const { results, mode } = await runSearch(supabase, apiKey, sanitized, sources_, limit);
       return new Response(
-        JSON.stringify({ results: topResults, query, searchMode }),
+        JSON.stringify({ results, query, searchMode: mode }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // ── Streaming SSE ───────────────────────────────────────────────────────
+    // ── Streaming SSE ───────────────────────────────────────────────────────────
+    // Return the Response IMMEDIATELY so the client receives HTTP 200 + event-stream
+    // headers right away and transitions to streaming state. All DB/LLM work happens
+    // inside start() and flows out as SSE events.
+    const enc = new TextEncoder();
+
     const readable = new ReadableStream({
       async start(controller) {
-        const enc  = new TextEncoder();
-        const emit = (event: string, data: unknown) =>
-          controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        // Swallow enqueue errors from client disconnects mid-stream
+        const emit = (event: string, data: unknown) => {
+          try {
+            controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          } catch { /* client disconnected */ }
+        };
+
+        let topResults: SearchResult[] = [];
 
         try {
+          // ── Database searches ──────────────────────────────────────────────────
+          const { results, mode: searchMode } = await runSearch(supabase, apiKey, sanitized, sources_, limit);
+          topResults = results;
+
           emit("results", { results: topResults, searchMode, query });
 
           if (topResults.length === 0) {
             emit("done", { references: [] });
-            controller.close();
             return;
           }
 
+          // ── LLM answer generation ──────────────────────────────────────────────
           const chatAc  = new AbortController();
-          const chatTid = setTimeout(() => chatAc.abort(), 20_000); // 20-second connection limit
+          const chatTid = setTimeout(() => chatAc.abort(), 20_000);
 
           const chatResp = await fetch(`${MISTRAL_API}/chat/completions`, {
             method: "POST",
@@ -211,9 +226,8 @@ Deno.serve(async (req: Request) => {
           clearTimeout(chatTid);
 
           if (!chatResp.ok || !chatResp.body) {
-            emit("error", { message: `LLM error: ${chatResp.status}` });
+            emit("error", { message: `LLM error ${chatResp.status}: ${chatResp.statusText}` });
             emit("done",  { references: topResults.slice(0, 5) });
-            controller.close();
             return;
           }
 
@@ -222,13 +236,13 @@ Deno.serve(async (req: Request) => {
           let buf = "";
 
           while (true) {
-            // 15-second rolling timeout: if no new chunk arrives, abort
+            // Rolling 15-second per-chunk timeout — prevents silent mid-stream stalls
             let chunkTimer: ReturnType<typeof setTimeout>;
-            const chunkTimeout = new Promise<never>((_, reject) => {
+            const timeout = new Promise<never>((_, reject) => {
               chunkTimer = setTimeout(() => reject(new Error("LLM stream timeout")), 15_000);
             });
 
-            const { done, value } = await Promise.race([reader.read(), chunkTimeout])
+            const { done, value } = await Promise.race([reader.read(), timeout])
               .finally(() => clearTimeout(chunkTimer!));
 
             if (done) break;
@@ -242,13 +256,16 @@ Deno.serve(async (req: Request) => {
               try {
                 const text = JSON.parse(payload).choices?.[0]?.delta?.content;
                 if (text) emit("chunk", { text });
-              } catch { /* ignore malformed chunks */ }
+              } catch { /* ignore malformed SSE chunks */ }
             }
           }
 
           emit("done", { references: topResults.slice(0, 5) });
+
         } catch (err) {
+          // Always emit done so the client can unblock, even on error
           emit("error", { message: String(err) });
+          emit("done",  { references: topResults.slice(0, 5) });
         } finally {
           controller.close();
         }
@@ -258,11 +275,12 @@ Deno.serve(async (req: Request) => {
     return new Response(readable, {
       headers: {
         ...corsHeaders,
-        "Content-Type":    "text/event-stream",
-        "Cache-Control":   "no-cache",
-        "X-Accel-Buffering":"no",
+        "Content-Type":      "text/event-stream",
+        "Cache-Control":     "no-cache",
+        "X-Accel-Buffering": "no",
       },
     });
+
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err) }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });

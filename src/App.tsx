@@ -63,7 +63,7 @@ function App() {
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
-      <main className="pt-[73px] lg:pl-20 min-h-screen">
+      <main className="pt-[65px] sm:pt-[73px] lg:pl-20 min-h-screen">
         <div className="p-6">
           {renderContent()}
         </div>
