@@ -52,7 +52,7 @@ export function Sidebar({ activeTab, onTabChange, isOpen, onClose }: SidebarProp
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         className={cn(
-          'fixed left-0 top-[65px] sm:top-[73px] bottom-0 bg-white border-r border-gray-200 transition-all duration-300 z-40 overflow-hidden',
+          'fixed left-0 top-[36px] bottom-0 bg-white border-r border-gray-200 transition-all duration-300 z-40 overflow-hidden',
           'lg:translate-x-0',
           isOpen ? 'translate-x-0 w-64' : '-translate-x-full w-20',
           'lg:w-20',

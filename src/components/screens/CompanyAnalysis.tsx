@@ -466,7 +466,7 @@ export function CompanyAnalysis() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-[calc(100vh-65px)] sm:h-[calc(100vh-73px)] bg-slate-50">
+    <div className="flex flex-col h-[calc(100vh-36px)] bg-slate-50">
 
       {/* Toolbar */}
       <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex flex-wrap items-center gap-3 shrink-0">

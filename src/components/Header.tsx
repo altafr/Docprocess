@@ -26,19 +26,19 @@ export function Header({ onMenuClick }: HeaderProps) {
 
   return (
     <header className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 z-50">
-      <div className="flex items-center justify-between px-4 sm:px-6 py-3">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-1">
+        <div className="flex items-center gap-2">
           <Button
             variant="ghost"
             size="icon"
             onClick={onMenuClick}
-            className="lg:hidden"
+            className="lg:hidden h-7 w-7"
           >
-            <Menu className="h-5 w-5" />
+            <Menu className="h-4 w-4" />
           </Button>
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 bg-[#DB0011] flex items-center justify-center flex-shrink-0">
-              <svg viewBox="0 0 40 40" className="w-7 h-7 sm:w-8 sm:h-8">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-[#DB0011] flex items-center justify-center flex-shrink-0">
+              <svg viewBox="0 0 40 40" className="w-5 h-5">
                 <rect width="18" height="18" fill="white" x="2" y="2" />
                 <rect width="18" height="18" fill="white" x="20" y="2" />
                 <rect width="18" height="18" fill="white" x="2" y="20" />
@@ -50,30 +50,17 @@ export function Header({ onMenuClick }: HeaderProps) {
               </svg>
             </div>
             <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-semibold text-gray-900 truncate">
-                Welcome, {userName}
+              <h1 className="text-xs font-semibold text-gray-900 truncate leading-tight">
+                Welcome, {userName} &mdash; Commercial Banking {market} – {journey}
               </h1>
-              <p className="text-xs sm:text-sm text-gray-600 truncate">
-                Commercial Banking {market} – {journey}
-              </p>
             </div>
           </div>
         </div>
         <div className="text-right shrink-0 ml-2">
-          <p className="text-xs sm:text-sm font-medium text-gray-900">
-            {currentTime.toLocaleDateString('en-US', {
-              weekday: 'short',
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-            })}
-          </p>
-          <p className="text-xs sm:text-sm text-gray-600">
-            {currentTime.toLocaleTimeString('en-US', {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-            })}
+          <p className="text-xs text-gray-600">
+            {currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' '}
+            {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
       </div>
