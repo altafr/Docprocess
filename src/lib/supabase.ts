@@ -27,7 +27,11 @@ export async function callEdgeFunction(functionName: string, body: any) {
 }
 
 // Returns a raw fetch Response with a streaming body (text/event-stream).
-export async function streamEdgeFunction(functionName: string, body: any): Promise<Response> {
+export async function streamEdgeFunction(
+  functionName: string,
+  body: any,
+  signal?: AbortSignal,
+): Promise<Response> {
   const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
     method: 'POST',
     headers: {
@@ -36,6 +40,7 @@ export async function streamEdgeFunction(functionName: string, body: any): Promi
       'Apikey': supabaseAnonKey,
     },
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText);

@@ -103,8 +103,9 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
   );
   const [history, setHistory]           = useState<HistoryEntry[]>(() => loadHistory());
   const [historyOpen, setHistoryOpen]   = useState(false);
-  const inputRef   = useRef<HTMLInputElement>(null);
-  const abortRef   = useRef<AbortController | null>(null);
+  const inputRef          = useRef<HTMLInputElement>(null);
+  const abortRef          = useRef<AbortController | null>(null);
+  const currentSearchIdRef = useRef<string>('');
 
   // Cancel any in-flight stream when component unmounts
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -132,9 +133,17 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
     const trimmed = q.trim();
     if (!trimmed) return;
 
-    // Cancel previous stream
+    // Cancel any previous in-flight stream
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current  = controller;
+
+    // Hard 35-second client-side timeout
+    const timeoutId = setTimeout(() => controller.abort(), 35_000);
+
+    // Use a search ID to discard results from stale concurrent calls
+    const searchId = crypto.randomUUID();
+    currentSearchIdRef.current = searchId;
 
     setLoading(true);
     setStreaming(false);
@@ -147,13 +156,16 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
     setReferences([]);
     setShowSources(false);
 
+    let localAnswer = '';
+
     try {
-      const response = await streamEdgeFunction('knowledge-search', {
-        query: trimmed,
-        sources: Array.from(activeSources),
-        limit: 20,
-        stream: true,
-      });
+      const response = await streamEdgeFunction(
+        'knowledge-search',
+        { query: trimmed, sources: Array.from(activeSources), limit: 20, stream: true },
+        controller.signal,
+      );
+
+      if (currentSearchIdRef.current !== searchId) return;
 
       const reader  = response.body!.getReader();
       const decoder = new TextDecoder();
@@ -166,6 +178,7 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (currentSearchIdRef.current !== searchId) { reader.cancel(); break; }
 
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split('\n');
@@ -181,26 +194,35 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
                 setResults(data.results ?? []);
                 setSearchMode(data.searchMode ?? 'keyword');
               } else if (eventType === 'chunk') {
-                setAnswer((prev) => prev + (data.text ?? ''));
+                localAnswer += data.text ?? '';
+                setAnswer(localAnswer);
               } else if (eventType === 'done') {
                 setReferences(data.references ?? []);
                 setStreamDone(true);
                 setStreaming(false);
               } else if (eventType === 'error') {
-                setError(data.message ?? 'Unknown error');
+                setError(data.message ?? 'Search service error');
               }
-            } catch { /* ignore parse errors */ }
+            } catch { /* ignore malformed SSE payloads */ }
             eventType = '';
           }
         }
       }
     } catch (err: any) {
-      if (err.name !== 'AbortError') {
+      if (currentSearchIdRef.current !== searchId) return;
+      if (err.name === 'AbortError') {
+        setError('Search timed out — please try again.');
+      } else {
         setError(err.message ?? 'Search failed');
       }
     } finally {
-      setLoading(false);
-      setStreaming(false);
+      clearTimeout(timeoutId);
+      if (currentSearchIdRef.current === searchId) {
+        setLoading(false);
+        setStreaming(false);
+        // If the stream ended without a `done` event but we have an answer, unblock the UI
+        if (localAnswer) setStreamDone(true);
+      }
     }
   }, [activeSources]);
 

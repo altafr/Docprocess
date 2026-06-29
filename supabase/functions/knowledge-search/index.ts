@@ -28,13 +28,20 @@ interface SearchResult {
 // ── Embedding ─────────────────────────────────────────────────────────────────
 async function getQueryEmbedding(query: string, apiKey: string): Promise<number[] | null> {
   try {
-    const resp = await fetch(`${MISTRAL_API}/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: EMBED_MODEL, inputs: [query] }),
-    });
-    if (!resp.ok) return null;
-    return (await resp.json()).data?.[0]?.embedding ?? null;
+    const ac   = new AbortController();
+    const tid  = setTimeout(() => ac.abort(), 7_000); // 7-second hard limit
+    try {
+      const resp = await fetch(`${MISTRAL_API}/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: EMBED_MODEL, inputs: [query] }),
+        signal: ac.signal,
+      });
+      if (!resp.ok) return null;
+      return (await resp.json()).data?.[0]?.embedding ?? null;
+    } finally {
+      clearTimeout(tid);
+    }
   } catch { return null; }
 }
 
@@ -183,6 +190,9 @@ Deno.serve(async (req: Request) => {
             return;
           }
 
+          const chatAc  = new AbortController();
+          const chatTid = setTimeout(() => chatAc.abort(), 20_000); // 20-second connection limit
+
           const chatResp = await fetch(`${MISTRAL_API}/chat/completions`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
@@ -196,7 +206,9 @@ Deno.serve(async (req: Request) => {
                 { role: "user",   content: `Question: ${sanitized}\n\nRetrieved documents:\n${buildContext(topResults)}` },
               ],
             }),
+            signal: chatAc.signal,
           });
+          clearTimeout(chatTid);
 
           if (!chatResp.ok || !chatResp.body) {
             emit("error", { message: `LLM error: ${chatResp.status}` });
@@ -210,7 +222,15 @@ Deno.serve(async (req: Request) => {
           let buf = "";
 
           while (true) {
-            const { done, value } = await reader.read();
+            // 15-second rolling timeout: if no new chunk arrives, abort
+            let chunkTimer: ReturnType<typeof setTimeout>;
+            const chunkTimeout = new Promise<never>((_, reject) => {
+              chunkTimer = setTimeout(() => reject(new Error("LLM stream timeout")), 15_000);
+            });
+
+            const { done, value } = await Promise.race([reader.read(), chunkTimeout])
+              .finally(() => clearTimeout(chunkTimer!));
+
             if (done) break;
             buf += decoder.decode(value, { stream: true });
             const lines = buf.split("\n");
