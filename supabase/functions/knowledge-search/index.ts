@@ -34,117 +34,43 @@ async function getQueryEmbedding(query: string, apiKey: string): Promise<number[
       body: JSON.stringify({ model: EMBED_MODEL, inputs: [query] }),
     });
     if (!resp.ok) return null;
-    const json = await resp.json();
-    return json.data?.[0]?.embedding ?? null;
+    return (await resp.json()).data?.[0]?.embedding ?? null;
   } catch { return null; }
 }
 
-// ── Semantic search ───────────────────────────────────────────────────────────
-async function semanticSearch(
-  supabase: ReturnType<typeof createClient>,
-  sources: SourceType[],
-  embedding: number[],
-  limit: number
-): Promise<SearchResult[]> {
-  const vp = JSON.stringify(embedding);
-  const rpc = async (fn: string, source: SourceType) => {
-    const { data } = await supabase.rpc(fn, { query_embedding: vp, result_limit: limit, min_similarity: 0.25 });
-    return (data ?? []) as any[];
-  };
-
-  const rows = await Promise.all([
-    sources.includes("board_resolution")   ? rpc("search_board_resolutions_semantic",   "board_resolution")   : Promise.resolve([]),
-    sources.includes("processed_document") ? rpc("search_processed_documents_semantic", "processed_document") : Promise.resolve([]),
-    sources.includes("company_mandate")    ? rpc("search_company_mandates_semantic",    "company_mandate")    : Promise.resolve([]),
-  ]);
-
-  return rows.flat().map((row, _i, _arr) => mapSemanticRow(row));
-}
-
-function mapSemanticRow(row: any): SearchResult {
-  const source: SourceType = row.director_name !== undefined ? "company_mandate"
-    : row.file_name !== undefined ? "processed_document"
-    : "board_resolution";
+// ── Unified DB row → SearchResult mappers ─────────────────────────────────────
+function mapUnifiedRow(row: any, mode: "semantic" | "keyword"): SearchResult {
+  const meta: Record<string, string | null> = {};
+  if (row.meta && typeof row.meta === "object") {
+    for (const [k, v] of Object.entries(row.meta)) {
+      meta[k] = v != null ? String(v) : null;
+    }
+  }
   return {
-    id: row.id,
-    source,
-    rank: row.similarity ?? 0,
-    title: source === "board_resolution" ? (row.document_name || row.resolution_type || "Board Resolution")
-         : source === "processed_document" ? row.file_name
-         : row.director_name,
-    subtitle: source === "board_resolution"
-      ? [row.company_name, row.resolution_number, row.resolution_date].filter(Boolean).join(" · ")
-      : source === "processed_document" ? (row.category ?? "Uncategorised")
-      : [row.company_name, row.title].filter(Boolean).join(" · "),
-    snippet: source === "board_resolution" ? (row.purpose_summary || row.full_text?.slice(0, 300) || "")
-           : source === "processed_document" ? (row.summary?.slice(0, 300) || "")
-           : (row.notes || `${row.signing_arrangement ?? ""} signing`).trim(),
-    metadata: source === "board_resolution"
-      ? { company_name: row.company_name ?? null, resolution_type: row.resolution_type ?? null, resolution_date: row.resolution_date ?? null, effective_date: row.effective_date ?? null, expiry_date: row.expiry_date ?? null }
-      : source === "processed_document"
-      ? { category: row.category ?? null, file_size: row.file_size ? `${Math.round(row.file_size / 1024)} KB` : null }
-      : { company_name: row.company_name, signing_arrangement: row.signing_arrangement ?? null, effective_date: row.effective_date ?? null, expiry_date: row.expiry_date ?? null },
-    created_at: row.created_at ?? row.processed_at ?? "",
-    searchMode: "semantic",
+    id:         row.id,
+    source:     row.source as SourceType,
+    rank:       mode === "semantic" ? (row.similarity ?? 0) : (row.rank ?? 0) * 0.6,
+    title:      row.title ?? "",
+    subtitle:   row.subtitle ?? "",
+    snippet:    row.snippet ?? "",
+    metadata:   meta,
+    created_at: row.created_at ?? "",
+    searchMode: mode,
   };
-}
-
-// ── Keyword (FTS) search ──────────────────────────────────────────────────────
-async function keywordSearch(
-  supabase: ReturnType<typeof createClient>,
-  sources: SourceType[],
-  sanitized: string,
-  limit: number
-): Promise<SearchResult[]> {
-  const rpc = async (fn: string) => {
-    const { data } = await supabase.rpc(fn, { query_text: sanitized, result_limit: limit });
-    return (data ?? []) as any[];
-  };
-
-  const [br, pd, cm] = await Promise.all([
-    sources.includes("board_resolution")   ? rpc("search_board_resolutions")   : Promise.resolve([]),
-    sources.includes("processed_document") ? rpc("search_processed_documents") : Promise.resolve([]),
-    sources.includes("company_mandate")    ? rpc("search_company_mandates")    : Promise.resolve([]),
-  ]);
-
-  const mapBr = (row: any): SearchResult => ({
-    id: row.id, source: "board_resolution", rank: (row.rank ?? 0) * 0.6,
-    title: row.document_name || row.resolution_type || "Board Resolution",
-    subtitle: [row.company_name, row.resolution_number, row.resolution_date].filter(Boolean).join(" · "),
-    snippet: row.purpose_summary || row.full_text?.slice(0, 300) || "",
-    metadata: { company_name: row.company_name ?? null, resolution_type: row.resolution_type ?? null, resolution_date: row.resolution_date ?? null, effective_date: row.effective_date ?? null, expiry_date: row.expiry_date ?? null },
-    created_at: row.created_at, searchMode: "keyword",
-  });
-  const mapPd = (row: any): SearchResult => ({
-    id: row.id, source: "processed_document", rank: (row.rank ?? 0) * 0.6,
-    title: row.file_name, subtitle: row.category ?? "Uncategorised",
-    snippet: row.summary?.slice(0, 300) || "",
-    metadata: { category: row.category ?? null, file_size: row.file_size ? `${Math.round(row.file_size / 1024)} KB` : null },
-    created_at: row.processed_at, searchMode: "keyword",
-  });
-  const mapCm = (row: any): SearchResult => ({
-    id: row.id, source: "company_mandate", rank: (row.rank ?? 0) * 0.6,
-    title: row.director_name,
-    subtitle: [row.company_name, row.title].filter(Boolean).join(" · "),
-    snippet: (row.notes || `${row.signing_arrangement ?? ""} signing`).trim(),
-    metadata: { company_name: row.company_name, signing_arrangement: row.signing_arrangement ?? null, effective_date: row.effective_date ?? null, expiry_date: row.expiry_date ?? null },
-    created_at: row.created_at, searchMode: "keyword",
-  });
-
-  return [...br.map(mapBr), ...pd.map(mapPd), ...cm.map(mapCm)];
 }
 
 // ── Reciprocal Rank Fusion ────────────────────────────────────────────────────
 function rrfMerge(semantic: SearchResult[], keyword: SearchResult[], k = 60): SearchResult[] {
   const scores = new Map<string, { result: SearchResult; score: number }>();
-  const add = (list: SearchResult[], w: number) => list.forEach((r, i) => {
-    const rrf = w / (k + i + 1);
-    const ex = scores.get(r.id);
-    if (ex) { ex.score += rrf; if (r.searchMode === "semantic") ex.result = r; }
-    else scores.set(r.id, { result: r, score: rrf });
-  });
+  const add = (list: SearchResult[], w: number) =>
+    list.forEach((r, i) => {
+      const rrf = w / (k + i + 1);
+      const ex  = scores.get(r.id);
+      if (ex) { ex.score += rrf; if (r.searchMode === "semantic") ex.result = r; }
+      else scores.set(r.id, { result: r, score: rrf });
+    });
   add(semantic, 0.65);
-  add(keyword, 0.35);
+  add(keyword,  0.35);
   return Array.from(scores.values())
     .sort((a, b) => b.score - a.score)
     .map(({ result, score }) => ({ ...result, rank: Math.min(1, score * k) }));
@@ -180,30 +106,46 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const body = await req.json();
-    const { query, limit = 20, sources, stream = false } = body;
+    const { query, limit = 20, sources, stream = false } = await req.json();
 
     if (!query?.trim()) {
       return new Response(JSON.stringify({ error: "query is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const apiKey = Deno.env.get("MISTRAL_API_KEY")!;
-    const sanitized = query.trim().replace(/['"\\]/g, " ");
-    const enabledSources: SourceType[] = sources ?? ["board_resolution", "processed_document", "company_mandate"];
+    const supabase   = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const apiKey     = Deno.env.get("MISTRAL_API_KEY")!;
+    const sanitized  = query.trim().replace(/['"\\]/g, " ");
+    const sources_: SourceType[] = sources ?? ["board_resolution", "processed_document", "company_mandate"];
 
-    // Run embedding + keyword search in parallel
-    const [embedding, kwResults] = await Promise.all([
+    // ── Run embedding + keyword search in parallel ──────────────────────────
+    const [embedding, kwRaw] = await Promise.all([
       getQueryEmbedding(sanitized, apiKey),
-      keywordSearch(supabase, enabledSources, sanitized, limit),
+      supabase.rpc("search_knowledge_keyword", {
+        query_text:    sanitized,
+        source_filter: sources_,
+        result_limit:  limit,
+      }),
     ]);
 
-    let semResults: SearchResult[] = [];
-    if (embedding) semResults = await semanticSearch(supabase, enabledSources, embedding, limit);
+    const kwResults: SearchResult[] = (kwRaw.data ?? []).map((r: any) => mapUnifiedRow(r, "keyword"));
 
+    // ── Semantic search (only if embedding succeeded) ───────────────────────
+    let semResults: SearchResult[] = [];
+    if (embedding) {
+      const { data: semRaw } = await supabase.rpc("search_knowledge_semantic", {
+        query_embedding: JSON.stringify(embedding),
+        source_filter:   sources_,
+        result_limit:    limit,
+        min_similarity:  0.25,
+      });
+      semResults = (semRaw ?? []).map((r: any) => mapUnifiedRow(r, "semantic"));
+    }
+
+    // ── Merge ───────────────────────────────────────────────────────────────
     let allResults: SearchResult[];
     let searchMode: "semantic" | "hybrid" | "keyword";
+
     if (semResults.length > 0 && kwResults.length > 0) {
       allResults = rrfMerge(semResults, kwResults);
       searchMode = "hybrid";
@@ -217,23 +159,22 @@ Deno.serve(async (req: Request) => {
 
     const topResults = allResults.slice(0, limit);
 
-    // ── Non-streaming response ─────────────────────────────────────────────────
+    // ── Non-streaming ───────────────────────────────────────────────────────
     if (!stream) {
       return new Response(
         JSON.stringify({ results: topResults, query, searchMode }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // ── Streaming SSE response ─────────────────────────────────────────────────
+    // ── Streaming SSE ───────────────────────────────────────────────────────
     const readable = new ReadableStream({
       async start(controller) {
-        const enc = new TextEncoder();
+        const enc  = new TextEncoder();
         const emit = (event: string, data: unknown) =>
           controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
 
         try {
-          // 1. Emit search results immediately
           emit("results", { results: topResults, searchMode, query });
 
           if (topResults.length === 0) {
@@ -242,8 +183,6 @@ Deno.serve(async (req: Request) => {
             return;
           }
 
-          // 2. Stream LLM answer
-          const context = buildContext(topResults);
           const chatResp = await fetch(`${MISTRAL_API}/chat/completions`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
@@ -254,19 +193,19 @@ Deno.serve(async (req: Request) => {
               temperature: 0.15,
               messages: [
                 { role: "system", content: SYSTEM_PROMPT },
-                { role: "user", content: `Question: ${sanitized}\n\nRetrieved documents:\n${context}` },
+                { role: "user",   content: `Question: ${sanitized}\n\nRetrieved documents:\n${buildContext(topResults)}` },
               ],
             }),
           });
 
           if (!chatResp.ok || !chatResp.body) {
             emit("error", { message: `LLM error: ${chatResp.status}` });
-            emit("done", { references: topResults.slice(0, 5) });
+            emit("done",  { references: topResults.slice(0, 5) });
             controller.close();
             return;
           }
 
-          const reader = chatResp.body.getReader();
+          const reader  = chatResp.body.getReader();
           const decoder = new TextDecoder();
           let buf = "";
 
@@ -281,8 +220,7 @@ Deno.serve(async (req: Request) => {
               const payload = line.slice(6).trim();
               if (payload === "[DONE]") continue;
               try {
-                const parsed = JSON.parse(payload);
-                const text = parsed.choices?.[0]?.delta?.content;
+                const text = JSON.parse(payload).choices?.[0]?.delta?.content;
                 if (text) emit("chunk", { text });
               } catch { /* ignore malformed chunks */ }
             }
@@ -300,9 +238,9 @@ Deno.serve(async (req: Request) => {
     return new Response(readable, {
       headers: {
         ...corsHeaders,
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",
+        "Content-Type":    "text/event-stream",
+        "Cache-Control":   "no-cache",
+        "X-Accel-Buffering":"no",
       },
     });
   } catch (err) {
