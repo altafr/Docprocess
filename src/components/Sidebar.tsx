@@ -1,7 +1,7 @@
 
 
 import { useState } from 'react';
-import { MessageSquare, Users, Languages, FileText, Settings, X, FolderSearch, ChartBar as BarChart2, Network, ScrollText, Tags, ShieldCheck, BookOpen, Search } from 'lucide-react';
+import { MessageSquare, Users, Languages, FileText, Settings, X, FolderSearch, ChartBar as BarChart2, Network, ScrollText, Tags, ShieldCheck, BookOpen, Search, GitBranch } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BRAND_RED } from '@/lib/constants';
 
@@ -13,18 +13,19 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { id: 'procedure',        label: 'Procedure Q&A',        icon: MessageSquare },
-  { id: 'asksme',           label: 'AskSME',               icon: Users },
-  { id: 'translation',      label: 'Translation Service',  icon: Languages },
-  { id: 'ocr',              label: 'Data Extraction (OCR)', icon: FileText },
-  { id: 'docprocessor',     label: 'Document Processor',   icon: FolderSearch },
-  { id: 'usagelogs',        label: 'Usage Logs',           icon: BarChart2 },
-  { id: 'boardresolutions', label: 'Board Resolutions',    icon: ScrollText },
-  { id: 'companyMandates',  label: 'Company Mandates',     icon: ShieldCheck },
-  { id: 'categories',       label: 'Document Categories',  icon: Tags },
-  { id: 'pipeline',         label: 'Processing Pipeline',  icon: Network },
-  { id: 'promptlibrary',    label: 'Prompt Library',       icon: BookOpen },
-  { id: 'knowledgesearch',  label: 'Knowledge Search',     icon: Search },
+  { id: 'procedure',         label: 'Procedure Q&A',        icon: MessageSquare },
+  { id: 'asksme',            label: 'AskSME',               icon: Users },
+  { id: 'translation',       label: 'Translation Service',  icon: Languages },
+  { id: 'ocr',               label: 'Data Extraction (OCR)', icon: FileText },
+  { id: 'docprocessor',      label: 'Document Processor',   icon: FolderSearch },
+  { id: 'usagelogs',         label: 'Usage Logs',           icon: BarChart2 },
+  { id: 'boardresolutions',  label: 'Board Resolutions',    icon: ScrollText },
+  { id: 'companyMandates',   label: 'Company Mandates',     icon: ShieldCheck },
+  { id: 'companyanalysis',   label: 'Company Analysis',     icon: GitBranch },
+  { id: 'categories',        label: 'Document Categories',  icon: Tags },
+  { id: 'pipeline',          label: 'Processing Pipeline',  icon: Network },
+  { id: 'promptlibrary',     label: 'Prompt Library',       icon: BookOpen },
+  { id: 'knowledgesearch',   label: 'Knowledge Search',     icon: Search },
 ];
 
 export function Sidebar({ activeTab, onTabChange, isOpen, onClose }: SidebarProps) {
