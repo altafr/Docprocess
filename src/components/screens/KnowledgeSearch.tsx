@@ -2,8 +2,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Search, FileText, ScrollText, ShieldCheck, ExternalLink, Clock,
   ChevronDown, ChevronRight, X, CircleAlert as AlertCircle,
-  Loader as Loader2, Sparkles, Database, ChevronUp,
+  Loader as Loader2, Sparkles, Database, ChevronUp, History, Trash2,
 } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -59,6 +60,29 @@ interface KnowledgeSearchProps {
   onNavigate?: (tab: string) => void;
 }
 
+// ── History ───────────────────────────────────────────────────────────────────
+interface HistoryEntry {
+  id: string;
+  query: string;
+  timestamp: string;
+  searchMode: 'semantic' | 'hybrid' | 'keyword' | null;
+  resultsCount: number;
+  answerSnippet: string;
+  sources: SourceType[];
+}
+
+const HISTORY_LS_KEY = 'ks_search_history';
+const HISTORY_MAX    = 50;
+
+function loadHistory(): HistoryEntry[] {
+  try { return JSON.parse(localStorage.getItem(HISTORY_LS_KEY) ?? '[]'); }
+  catch { return []; }
+}
+
+function saveHistory(entries: HistoryEntry[]) {
+  localStorage.setItem(HISTORY_LS_KEY, JSON.stringify(entries.slice(0, HISTORY_MAX)));
+}
+
 export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
   const [query, setQuery]             = useState('');
   const [results, setResults]         = useState<SearchResult[]>([]);
@@ -77,11 +101,32 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
   const [activeSources, setActiveSources] = useState<Set<SourceType>>(
     new Set(['board_resolution', 'processed_document', 'company_mandate'])
   );
+  const [history, setHistory]           = useState<HistoryEntry[]>(() => loadHistory());
+  const [historyOpen, setHistoryOpen]   = useState(false);
   const inputRef   = useRef<HTMLInputElement>(null);
   const abortRef   = useRef<AbortController | null>(null);
 
   // Cancel any in-flight stream when component unmounts
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Save to history when a search completes
+  useEffect(() => {
+    if (!streamDone || !lastQuery || !answer) return;
+    const entry: HistoryEntry = {
+      id: crypto.randomUUID(),
+      query: lastQuery,
+      timestamp: new Date().toISOString(),
+      searchMode,
+      resultsCount: results.length,
+      answerSnippet: answer.slice(0, 120).replace(/[#*`]/g, ''),
+      sources: Array.from(activeSources),
+    };
+    setHistory((prev) => {
+      const next = [entry, ...prev.filter((h) => h.query !== lastQuery)].slice(0, HISTORY_MAX);
+      saveHistory(next);
+      return next;
+    });
+  }, [streamDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runSearch = useCallback(async (q: string) => {
     const trimmed = q.trim();
@@ -215,15 +260,30 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
             Ask anything about board resolutions, company mandates, and processed documents.
           </p>
         </div>
-        <button
-          onClick={runIndex}
-          disabled={indexing}
-          title="Generate semantic embeddings for unindexed documents"
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-        >
-          {indexing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-          {indexing ? 'Indexing…' : 'Re-index'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setHistoryOpen(true)}
+            title="Search history"
+            className="relative flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0"
+          >
+            <History className="h-4 w-4" />
+            History
+            {history.length > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#DB0011] text-white text-xs flex items-center justify-center font-medium">
+                {history.length > 9 ? '9+' : history.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={runIndex}
+            disabled={indexing}
+            title="Generate semantic embeddings for unindexed documents"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+          >
+            {indexing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+            {indexing ? 'Indexing…' : 'Re-index'}
+          </button>
+        </div>
       </div>
 
       {/* Search bar */}
@@ -343,6 +403,16 @@ export function KnowledgeSearch({ onNavigate }: KnowledgeSearchProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* History drawer */}
+      <HistoryDrawer
+        open={historyOpen}
+        history={history}
+        onClose={() => setHistoryOpen(false)}
+        onSelect={(q) => { setHistoryOpen(false); setQuery(q); runSearch(q); }}
+        onDelete={(id) => setHistory((prev) => { const n = prev.filter((h) => h.id !== id); saveHistory(n); return n; })}
+        onClearAll={() => { setHistory([]); saveHistory([]); }}
+      />
     </div>
   );
 }
@@ -649,4 +719,147 @@ function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   } catch { return iso; }
+}
+
+// ── History Drawer ─────────────────────────────────────────────────────────────
+interface HistoryDrawerProps {
+  open: boolean;
+  history: HistoryEntry[];
+  onClose: () => void;
+  onSelect: (query: string) => void;
+  onDelete: (id: string) => void;
+  onClearAll: () => void;
+}
+
+function HistoryDrawer({ open, history, onClose, onSelect, onDelete, onClearAll }: HistoryDrawerProps) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 bg-black/20 z-40"
+            onClick={onClose}
+          />
+          {/* Drawer panel */}
+          <motion.aside
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', stiffness: 380, damping: 38 }}
+            className="fixed right-0 top-0 h-full w-80 bg-white shadow-2xl z-50 flex flex-col"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <History className="h-4 w-4 text-gray-500" />
+                <span className="text-sm font-semibold text-gray-900">Search History</span>
+                {history.length > 0 && (
+                  <span className="text-xs text-gray-400 font-medium">({history.length})</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {history.length > 0 && (
+                  <button
+                    onClick={onClearAll}
+                    className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1 rounded hover:bg-red-50"
+                  >
+                    Clear all
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto">
+              {history.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+                  <History className="h-8 w-8 opacity-30" />
+                  <p className="text-sm">No searches yet</p>
+                  <p className="text-xs text-center px-6">Your searches will appear here after you run a query.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {history.map((entry) => (
+                    <HistoryItem
+                      key={entry.id}
+                      entry={entry}
+                      onSelect={() => onSelect(entry.query)}
+                      onDelete={() => onDelete(entry.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function HistoryItem({ entry, onSelect, onDelete }: {
+  entry: HistoryEntry;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  const modeColors: Record<string, string> = {
+    hybrid:   'bg-green-50 text-green-700 border-green-200',
+    semantic: 'bg-blue-50 text-blue-700 border-blue-200',
+    keyword:  'bg-gray-100 text-gray-600 border-gray-200',
+  };
+  const modeColor = entry.searchMode ? (modeColors[entry.searchMode] ?? modeColors.keyword) : modeColors.keyword;
+
+  let relativeTime = '';
+  try { relativeTime = formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true }); }
+  catch { relativeTime = entry.timestamp; }
+
+  return (
+    <div className="group flex items-start gap-3 px-5 py-3.5 hover:bg-gray-50 transition-colors">
+      <button
+        onClick={onSelect}
+        className="flex-1 min-w-0 text-left"
+      >
+        <p className="text-xs font-semibold text-gray-800 truncate group-hover:text-[#DB0011] transition-colors">
+          {entry.query}
+        </p>
+        {entry.answerSnippet && (
+          <p className="text-xs text-gray-400 mt-0.5 line-clamp-2 leading-relaxed">
+            {entry.answerSnippet}{entry.answerSnippet.length >= 120 ? '…' : ''}
+          </p>
+        )}
+        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+          <span className="flex items-center gap-1 text-gray-400 text-xs">
+            <Clock className="h-3 w-3" />
+            {relativeTime}
+          </span>
+          {entry.searchMode && (
+            <span className={cn('text-xs px-1.5 py-0.5 rounded-full border font-medium', modeColor)}>
+              {entry.searchMode}
+            </span>
+          )}
+          {entry.resultsCount > 0 && (
+            <span className="text-xs text-gray-400">{entry.resultsCount} result{entry.resultsCount !== 1 ? 's' : ''}</span>
+          )}
+        </div>
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); onDelete(); }}
+        className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all flex-shrink-0 mt-0.5"
+        title="Remove from history"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
 }
