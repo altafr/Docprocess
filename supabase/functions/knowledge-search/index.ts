@@ -25,6 +25,24 @@ interface SearchResult {
   searchMode: "semantic" | "keyword";
 }
 
+// ── FTS query preparation ─────────────────────────────────────────────────────
+// PostgreSQL FTS uses AND by default. Conversational filler words like "please"
+// and "show" are NOT English stop words, so they become required AND terms that
+// never appear in documents and kill all results. Strip them before FTS;
+// keep the original natural-language text for the embedding call.
+const FILLER_WORDS = new Set([
+  'please', 'show', 'me', 'list', 'find', 'search', 'get', 'give', 'display',
+  'fetch', 'retrieve', 'tell', 'look', 'what', 'which', 'who', 'when',
+  'where', 'how', 'why', 'can', 'could', 'will', 'would', 'should',
+  'shall', 'been', 'being', 'does', 'did', 'is', 'are', 'was', 'were',
+]);
+
+function prepareFTSQuery(query: string): string {
+  const words = query.split(/\s+/).filter(Boolean);
+  const filtered = words.filter(w => !FILLER_WORDS.has(w.toLowerCase()));
+  return (filtered.length > 0 ? filtered : words).join(' ');
+}
+
 // ── Embedding — 7-second hard timeout ────────────────────────────────────────
 async function getQueryEmbedding(query: string, apiKey: string): Promise<number[] | null> {
   if (!apiKey) return null;
@@ -125,7 +143,7 @@ async function runSearch(
   const [embedding, kwRaw] = await Promise.all([
     getQueryEmbedding(sanitized, apiKey),
     supabase.rpc("search_knowledge_keyword", {
-      query_text:    sanitized,
+      query_text:    prepareFTSQuery(sanitized),  // strip filler words for AND-based FTS
       source_filter: sources_,
       result_limit:  limit,
     }),
