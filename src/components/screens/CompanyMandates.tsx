@@ -18,6 +18,7 @@ export interface CompanyMandate {
   expiry_date: string | null;
   source_resolution_ids: string[];
   notes: string | null;
+  signature_url: string | null;
   last_updated: string;
   created_at: string;
 }
@@ -244,6 +245,7 @@ export function CompanyMandates() {
                 <tr className="bg-gray-50 border-b border-gray-200">
                   <SortableHeader label="Company" field="company_name" sortField={sortField} sortAsc={sortAsc} onSort={handleSort} />
                   <SortableHeader label="Director / Person" field="director_name" sortField={sortField} sortAsc={sortAsc} onSort={handleSort} />
+                  <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Signature</th>
                   <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Authorised Products</th>
                   <SortableHeader label="Arrangement" field="signing_arrangement" sortField={sortField} sortAsc={sortAsc} onSort={handleSort} />
                   <th className="text-left px-4 py-3 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Sig. Type</th>
@@ -317,6 +319,23 @@ function MandateRow({
           </div>
         </td>
         <td className="px-4 py-3">
+          {m.signature_url ? (
+            <a href={m.signature_url} target="_blank" rel="noopener noreferrer"
+              className="block w-20 h-10 rounded border border-gray-200 bg-gray-50 overflow-hidden hover:border-blue-300 transition-colors"
+              title="View full signature"
+            >
+              <img
+                src={m.signature_url}
+                alt={`${m.director_name} signature`}
+                className="w-full h-full object-contain"
+                onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none'; }}
+              />
+            </a>
+          ) : (
+            <span className="text-[11px] text-gray-300">—</span>
+          )}
+        </td>
+        <td className="px-4 py-3">
           <div className="flex flex-wrap gap-1 max-w-[200px]">
             {m.authorized_products.slice(0, 2).map((p, i) => (
               <span key={i} className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded border border-gray-200">
@@ -362,7 +381,7 @@ function MandateRow({
 
       {expanded && (
         <tr>
-          <td colSpan={9} className="bg-blue-50/30 border-b border-blue-100">
+          <td colSpan={10} className="bg-blue-50/30 border-b border-blue-100">
             <ExpandedMandateDetail mandate={m} onUpdate={onUpdate} />
           </td>
         </tr>

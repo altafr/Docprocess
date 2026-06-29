@@ -48,7 +48,7 @@ export interface StoredSignature {
 
 const PADDING = 3; // % padding around each cropped region
 
-/** Crops a rectangular region from an image data URL, returns a PNG data URL. */
+/** Crops a rectangular region from an image data URL, returns a JPEG data URL. */
 export async function cropImageRegion(
   imageDataUrl: string,
   bbox: BoundingBox,
@@ -76,7 +76,7 @@ export async function cropImageRegion(
       if (!ctx) { reject(new Error('No canvas context')); return; }
 
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-      resolve(canvas.toDataURL('image/png'));
+      resolve(canvas.toDataURL('image/jpeg', 0.92));
       canvas.remove();
     };
     img.onerror = () => reject(new Error('Image load failed'));
@@ -95,15 +95,15 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mime });
 }
 
-/** Uploads a PNG data URL to the signatures storage bucket, returns public URL. */
+/** Uploads a JPEG data URL to the signatures storage bucket, returns public URL. */
 export async function uploadSignatureImage(
-  pngDataUrl: string,
+  jpegDataUrl: string,
   storagePath: string,
 ): Promise<string> {
-  const blob = dataUrlToBlob(pngDataUrl);
+  const blob = dataUrlToBlob(jpegDataUrl);
   const { error } = await supabase.storage
     .from('signatures')
-    .upload(storagePath, blob, { contentType: 'image/png', upsert: true });
+    .upload(storagePath, blob, { contentType: 'image/jpeg', upsert: true });
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
   const { data } = supabase.storage.from('signatures').getPublicUrl(storagePath);
   return data.publicUrl;
@@ -182,13 +182,13 @@ export async function extractAndStoreSignatures(
       index: number,
     ) => {
       try {
-        const pngDataUrl = await cropImageRegion(pageImage, bbox);
+        const jpegDataUrl = await cropImageRegion(pageImage, bbox);
         const slug = (personName ?? elementType)
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .slice(0, 40);
-        const storagePath = `${brId ?? result.id}/${elementType}/${slug}-${index}.png`;
-        const storageUrl = await uploadSignatureImage(pngDataUrl, storagePath);
+        const storagePath = `${brId ?? result.id}/${elementType}/${slug}-${index}.jpg`;
+        const storageUrl = await uploadSignatureImage(jpegDataUrl, storagePath);
 
         const row = {
           board_resolution_id: brId,
@@ -209,6 +209,16 @@ export async function extractAndStoreSignatures(
           .single();
 
         if (!error && data) rows.push(data as StoredSignature);
+
+        // For signature elements, write the URL directly to company_mandates so
+        // it is immediately accessible without a join on document_signatures.
+        if (elementType === 'signature' && personName && companyName) {
+          await supabase
+            .from('company_mandates')
+            .update({ signature_url: storageUrl, last_updated: new Date().toISOString() })
+            .eq('company_name', companyName)
+            .ilike('director_name', personName);
+        }
       } catch (e) {
         console.error('Signature crop/upload error:', e);
       }

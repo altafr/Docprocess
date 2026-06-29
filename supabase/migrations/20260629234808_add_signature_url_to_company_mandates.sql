@@ -1,0 +1,2 @@
+ALTER TABLE company_mandates
+  ADD COLUMN IF NOT EXISTS signature_url TEXT DEFAULT NULL;

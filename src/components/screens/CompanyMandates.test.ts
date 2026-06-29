@@ -33,6 +33,7 @@ function makeMandate(overrides: Partial<CompanyMandate> = {}): CompanyMandate {
     expiry_date: null,
     source_resolution_ids: ['r1'],
     notes: null,
+    signature_url: null,
     last_updated: '2024-06-01T00:00:00Z',
     created_at: '2024-01-01T00:00:00Z',
     ...overrides,
@@ -209,5 +210,40 @@ describe('CompanyMandate interface contract', () => {
   test('source_resolution_ids defaults to array', () => {
     const m = makeMandate({ source_resolution_ids: ['r1', 'r2'] });
     expect(m.source_resolution_ids).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// signature_url field
+// ---------------------------------------------------------------------------
+
+describe('CompanyMandate signature_url', () => {
+  test('accepts null when no signature has been stored', () => {
+    const m = makeMandate({ signature_url: null });
+    expect(m.signature_url).toBeNull();
+  });
+
+  test('accepts a JPEG URL string', () => {
+    const url = 'https://example.com/sigs/john-smith-0.jpg';
+    const m = makeMandate({ signature_url: url });
+    expect(m.signature_url).toBe(url);
+  });
+
+  test('signature_url is preserved through buildMandateRows', () => {
+    const url = 'https://example.com/sigs/jane-doe-0.jpg';
+    const m = makeMandate({ signature_url: url });
+    const rows = buildMandateRows([m]);
+    expect(rows[0].signature_url).toBe(url);
+  });
+
+  test('null signature_url is preserved through buildMandateRows', () => {
+    const m = makeMandate({ signature_url: null });
+    const rows = buildMandateRows([m]);
+    expect(rows[0].signature_url).toBeNull();
+  });
+
+  test('exportMandatesToCsv does not throw with a signature_url present', () => {
+    const m = makeMandate({ signature_url: 'https://example.com/sigs/test-0.jpg' });
+    expect(() => exportMandatesToCsv([m])).not.toThrow();
   });
 });
