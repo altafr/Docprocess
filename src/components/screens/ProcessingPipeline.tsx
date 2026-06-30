@@ -60,11 +60,11 @@ const NODE_INFO: Record<string, NodeInfo> = {
     color: 'amber', icon: Copy,
   },
   'client-extract': {
-    label: 'Client-side PDF Extraction',
-    description: 'Digital (non-scanned) PDFs are parsed in the browser with pdf.js. A heuristic checks text density — if the extracted text is under 100 chars or less than 1% of file size, the PDF is treated as scanned and falls through to OCR.',
-    tech: 'pdfjs-dist · extractTextFromPDF() · isScannedPDF()',
+    label: 'Client-side PDF Processing',
+    description: 'Two operations run for PDFs. (1) Text extraction: pdf.js parses digital PDFs in the browser. A density heuristic (text length < 100 chars or < 1% of file size) marks scanned PDFs so they fall through to OCR. (2) First-page render: the first page is rasterised to a JPEG at 100 dpi using Canvas. This image is sent to the edge function as firstPageImage, enabling Pixtral vision analysis on PDFs and returning accurate signature bounding boxes. Image files skip both steps.',
+    tech: 'pdfjs-dist · extractTextFromPDFClient() · convertPDFToImages(100 dpi) · Canvas.toDataURL()',
     input: 'PDF File object',
-    output: 'clientText string (empty string if scanned/image)',
+    output: 'clientText string + firstPageImage JPEG data URI (both optional, empty/undefined for images or on failure)',
     color: 'blue', icon: FileText,
   },
   'edge-fn': {
@@ -77,9 +77,9 @@ const NODE_INFO: Record<string, NodeInfo> = {
   },
   doc: {
     label: 'Document Agent',
-    description: 'Each document runs in its own independent Promise — one error does not abort others. The agent receives the base64 data URI plus any client-extracted text. All N documents start simultaneously; the batch resolves when the slowest document finishes.',
+    description: 'Each document runs in its own independent Promise — one error does not abort others. The agent receives the base64 data URI, any client-extracted text, and (for PDFs) the first-page JPEG image. All N documents start simultaneously; the batch resolves when the slowest document finishes.',
     tech: 'processOneDocument() · Promise.all fan-out',
-    input: '{ id, base64, fileName, clientText? }',
+    input: '{ id, base64, fileName, clientText?, firstPageImage? }',
     output: 'DocumentResult routed through the per-doc pipeline',
     color: 'slate', icon: FileText,
   },
@@ -101,10 +101,10 @@ const NODE_INFO: Record<string, NodeInfo> = {
   },
   br: {
     label: 'Board Resolution Path',
-    description: 'Triggered only when category === "Board Resolution". Three calls run concurrently via Promise.allSettled: (1) extractBoardResolutionDetails — structured fields (company, resolution number, type, signatories, authorized persons, decisions); (2) extractVisualElements — Pixtral vision for images, mistral-small text analysis for PDFs, detecting signatures and stamps with bounding boxes; (3) extractSigningMandates — per-person banking authority (sole/joint/any-two, products, rules).',
-    tech: 'mistral-small-latest + pixtral-12b-2409 · Promise.allSettled',
-    input: 'extractedText + base64 data URI',
-    output: '{ boardResolutionDetails, visualElements, signingMandates[] }',
+    description: 'Triggered only when category === "Board Resolution". Three calls run concurrently via Promise.allSettled: (1) extractBoardResolutionDetails — structured fields (company, resolution number, type, signatories, authorized persons, decisions); (2) extractVisualElements — if firstPageImage or a native image is available, Pixtral-12b vision is called and returns precise bounding boxes for signatures and stamps; otherwise text extraction is used as fallback. (3) extractSigningMandates — per-person banking authority (sole/joint/any-two, products, rules).',
+    tech: 'mistral-small-latest + pixtral-12b-2409 (vision) · Promise.allSettled · firstPageImage → bounding boxes',
+    input: 'extractedText + base64 data URI + firstPageImage? (JPEG of first page)',
+    output: '{ boardResolutionDetails, visualElements (with bounding boxes), signingMandates[] }',
     color: 'emerald', icon: Building2,
   },
   financial: {
@@ -181,10 +181,10 @@ const NODE_INFO: Record<string, NodeInfo> = {
   },
   'sig-extract': {
     label: 'Extract & Store Signatures',
-    description: 'Cropped signature and stamp images are generated client-side from the original file and the bounding box percentages returned by the visual elements pipeline. Crops are uploaded to Supabase Storage (document-signatures bucket) and linked to the board_resolutions row. StoredSignature objects update the UI inline.',
-    tech: 'Canvas API crop · Supabase Storage upload · extractAndStoreSignatures()',
-    input: 'Original File + VisualElements[] with bounding boxes',
-    output: 'StoredSignature[] — public URLs in document-signatures bucket, displayed on result cards',
+    description: 'Runs client-side after the edge function returns. For each board resolution result with bounding boxes, the original file is rendered to page images, each bounding box is cropped using the Canvas API, and the JPEG is uploaded to Supabase Storage (signatures bucket). A row is inserted into document_signatures, and company_mandates.signature_url is updated via an ilike match on (company_name, director_name) — making thumbnails immediately visible in both the Board Resolutions Signatures tab and the Company Mandates table.',
+    tech: 'Canvas API crop · Supabase Storage upload · extractAndStoreSignatures() · company_mandates UPDATE',
+    input: 'Original File + VisualElements[] with bounding boxes + brIdMap',
+    output: 'StoredSignature[] in document_signatures · signature_url written to company_mandates rows',
     color: 'rose', icon: Eye,
   },
   'embed-fn': {
@@ -221,7 +221,7 @@ const SIM_LABELS = [
   'Files selected & validated',
   'SHA-256 hash computed per file',
   'Duplicate check against processed_documents',
-  'Client-side PDF text extraction',
+  'Client-side PDF text extraction + first-page JPEG render',
   'Edge Function receives batch',
   'Fan-out: all documents start in parallel',
   'Mistral OCR running on all documents',
@@ -417,7 +417,7 @@ export function ProcessingPipeline() {
               <NodeCard id="dup-check"  label="Duplicate Detection"       sublabel="DB lookup · file_hash"                   isActive={isActive('dup-check')}    isVisited={isVisited('dup-check')}    isSelected={selectedId === 'dup-check'}    onClick={handleNodeClick} />
             </div>
             <VConnector />
-            <NodeCard id="client-extract" label="Client-side PDF Extraction" sublabel="pdf.js · skip scanned PDFs"         isActive={isActive('client-extract')} isVisited={isVisited('client-extract')} isSelected={selectedId === 'client-extract'} onClick={handleNodeClick} />
+            <NodeCard id="client-extract" label="Client-side PDF Processing" sublabel="pdf.js text + JPEG render (100 dpi)"         isActive={isActive('client-extract')} isVisited={isVisited('client-extract')} isSelected={selectedId === 'client-extract'} onClick={handleNodeClick} />
             <VConnector />
 
             {/* Phase 2 — Edge Function */}
