@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, Users, CircleAlert as AlertCircle, FileX, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight } from 'lucide-react';
+import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, Users, CircleAlert as AlertCircle, FileX, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, X, ZoomIn } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
 import type { StoredSignature } from '@/lib/signatureUtils';
@@ -110,6 +110,7 @@ export function CompanyMandates() {
   const [sortField, setSortField] = useState<SortField>('company_name');
   const [sortAsc, setSortAsc] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [sigLightbox, setSigLightbox] = useState<CompanyMandate | null>(null);
 
   const fetchMandates = useCallback(async () => {
     setLoading(true);
@@ -265,6 +266,7 @@ export function CompanyMandates() {
                       expanded={expandedId === m.id}
                       onToggle={() => setExpandedId(expandedId === m.id ? null : m.id)}
                       onUpdate={(patch) => updateMandate(m.id, patch)}
+                      onViewSignature={() => setSigLightbox(m)}
                     />
                   ))}
                 </AnimatePresence>
@@ -273,13 +275,62 @@ export function CompanyMandates() {
           </div>
         </div>
       )}
+      {/* Signature lightbox */}
+      <AnimatePresence>
+        {sigLightbox && sigLightbox.signature_url && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSigLightbox(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 cursor-pointer"
+          >
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.92, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl shadow-2xl overflow-hidden max-w-md w-full cursor-default"
+            >
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <p className="text-[14px] font-semibold text-gray-900">{sigLightbox.director_name}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {sigLightbox.company_name}{sigLightbox.title ? ` · ${sigLightbox.title}` : ''} · Signature
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSigLightbox(null)}
+                  className="text-gray-400 hover:text-gray-700 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-6 bg-gray-50 flex items-center justify-center min-h-[140px]">
+                <img
+                  src={sigLightbox.signature_url}
+                  alt={`${sigLightbox.director_name} signature`}
+                  className="max-w-full max-h-[320px] object-contain drop-shadow-sm"
+                />
+              </div>
+              <div className="px-5 py-3 border-t border-gray-100">
+                <a
+                  href={sigLightbox.signature_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[12px] text-blue-600 hover:underline"
+                >
+                  Open full size
+                </a>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Table row + expanded detail
-// ---------------------------------------------------------------------------
 
 function MandateRow({
   mandate: m,
@@ -287,12 +338,14 @@ function MandateRow({
   expanded,
   onToggle,
   onUpdate,
+  onViewSignature,
 }: {
   mandate: CompanyMandate;
   index: number;
   expanded: boolean;
   onToggle: () => void;
   onUpdate: (patch: Partial<CompanyMandate>) => void;
+  onViewSignature: () => void;
 }) {
   const expired = isMandateExpired(m);
   const expiringSoon = isMandateExpiringSoon(m);
@@ -320,17 +373,21 @@ function MandateRow({
         </td>
         <td className="px-4 py-3">
           {m.signature_url ? (
-            <a href={m.signature_url} target="_blank" rel="noopener noreferrer"
-              className="block w-20 h-10 rounded border border-gray-200 bg-gray-50 overflow-hidden hover:border-blue-300 transition-colors"
-              title="View full signature"
+            <button
+              onClick={(e) => { e.stopPropagation(); onViewSignature(); }}
+              className="group relative flex items-center justify-center w-24 h-12 rounded-lg border border-gray-200 bg-gray-50 overflow-hidden hover:border-blue-300 hover:bg-blue-50 transition-colors"
+              title="Click to view signature"
             >
               <img
                 src={m.signature_url}
                 alt={`${m.director_name} signature`}
-                className="w-full h-full object-contain"
+                className="max-w-full max-h-full object-contain p-1"
                 onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = 'none'; }}
               />
-            </a>
+              <span className="absolute inset-0 flex items-center justify-center bg-blue-600/0 group-hover:bg-blue-600/10 transition-colors rounded-lg">
+                <ZoomIn className="h-3.5 w-3.5 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </span>
+            </button>
           ) : (
             <span className="text-[11px] text-gray-300">—</span>
           )}
@@ -386,6 +443,7 @@ function MandateRow({
           </td>
         </tr>
       )}
+
     </>
   );
 }

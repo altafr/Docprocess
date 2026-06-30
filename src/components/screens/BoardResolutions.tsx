@@ -145,7 +145,7 @@ export function BoardResolutions() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [view, setView] = useState<'resolutions' | 'analysis' | 'groups'>('resolutions');
+  const [view, setView] = useState<'resolutions' | 'analysis' | 'groups' | 'signatures'>('resolutions');
   const [analysisCache, setAnalysisCache] = useState<Record<string, AnalysisState>>({});
   const [savedGroups, setSavedGroups] = useState<Array<{ id: string; group_name: string; member_companies: string[] }>>([]);
 
@@ -247,6 +247,15 @@ export function BoardResolutions() {
             >
               <Network className="h-3.5 w-3.5" />
               Group View
+            </button>
+            <button
+              onClick={() => setView('signatures')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                view === 'signatures' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Stamp className="h-3.5 w-3.5" />
+              Signatures
             </button>
           </div>
           <button
@@ -367,6 +376,9 @@ export function BoardResolutions() {
           onAnalyse={analyzeCompany}
         />
       )}
+
+      {/* Signatures & Stamps view */}
+      {view === 'signatures' && <SignaturesView />}
     </div>
   );
 }
@@ -799,7 +811,7 @@ function ResolutionCard({
                           href={sig.storage_url ?? '#'}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="block rounded-lg border border-blue-200 bg-blue-50 overflow-hidden w-32 h-16 flex items-center justify-center hover:border-blue-400 transition-colors"
+                          className="flex items-center justify-center rounded-lg border border-blue-200 bg-blue-50 overflow-hidden w-32 h-16 hover:border-blue-400 transition-colors"
                         >
                           <img
                             src={sig.storage_url ?? ''}
@@ -819,7 +831,7 @@ function ResolutionCard({
                           href={sig.storage_url ?? '#'}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="block rounded-lg border border-amber-200 bg-amber-50 overflow-hidden w-16 h-16 flex items-center justify-center hover:border-amber-400 transition-colors"
+                          className="flex items-center justify-center rounded-lg border border-amber-200 bg-amber-50 overflow-hidden w-16 h-16 hover:border-amber-400 transition-colors"
                         >
                           <img
                             src={sig.storage_url ?? ''}
@@ -1326,5 +1338,236 @@ function EditGroupModal({
         </div>
       </motion.div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Signatures & Stamps view
+// ---------------------------------------------------------------------------
+
+function SignatureTile({ sig, onClick }: { sig: StoredSignature; onClick: () => void }) {
+  const [imgError, setImgError] = useState(false);
+  const isSignature = sig.element_type === 'signature';
+
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <button
+        onClick={onClick}
+        className={`flex items-center justify-center rounded-xl border overflow-hidden hover:shadow-md hover:scale-105 transition-all cursor-pointer ${
+          isSignature
+            ? 'border-blue-200 bg-blue-50 w-36 h-[72px]'
+            : sig.element_type === 'seal'
+            ? 'border-emerald-200 bg-emerald-50 w-20 h-20 rounded-full'
+            : 'border-amber-200 bg-amber-50 w-20 h-20'
+        }`}
+      >
+        {sig.storage_url && !imgError ? (
+          <img
+            src={sig.storage_url}
+            alt={sig.person_name ?? sig.element_type}
+            className="max-w-full max-h-full object-contain p-1.5"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <span className="text-[9px] text-gray-400 italic px-2 text-center">
+            {imgError ? 'Failed' : 'No image'}
+          </span>
+        )}
+      </button>
+      <div className="text-center" style={{ maxWidth: 144 }}>
+        <p className="text-[10px] font-medium text-gray-700 truncate">
+          {sig.person_name ?? sig.element_type}
+        </p>
+        <p className={`text-[9px] capitalize ${
+          isSignature ? 'text-blue-500' : sig.element_type === 'seal' ? 'text-emerald-500' : 'text-amber-500'
+        }`}>
+          {sig.element_type}
+          {sig.signature_type && sig.signature_type !== 'unknown' && sig.signature_type !== 'stamp'
+            ? ` · ${sig.signature_type}`
+            : ''}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SignaturesView() {
+  const [sigs, setSigs] = useState<StoredSignature[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState<StoredSignature | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    supabase
+      .from('document_signatures')
+      .select('*')
+      .order('company_name')
+      .order('element_type')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (data) setSigs(data as StoredSignature[]);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex flex-wrap gap-4 pt-2">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="w-36 h-[72px] bg-gray-100 rounded-xl animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  if (sigs.length === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="flex flex-col items-center justify-center py-20 text-gray-400"
+      >
+        <PenLine className="h-10 w-10 mb-3 opacity-20" />
+        <p className="text-[14px] font-medium text-gray-500">No signatures extracted yet</p>
+        <p className="text-[12px] mt-1 text-center max-w-xs text-gray-400">
+          Signatures and stamps are automatically detected and cropped when board resolution documents are processed through the Document Processor.
+        </p>
+      </motion.div>
+    );
+  }
+
+  // Group by company
+  const grouped = sigs.reduce<Record<string, StoredSignature[]>>((acc, s) => {
+    const key = s.company_name ?? 'Unknown Company';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(s);
+    return acc;
+  }, {});
+
+  const sigCount = sigs.filter((s) => s.element_type === 'signature').length;
+  const stampCount = sigs.filter((s) => s.element_type !== 'signature').length;
+
+  return (
+    <>
+      <div className="space-y-6">
+        {/* Summary strip */}
+        <div className="flex gap-4 text-[12px] text-gray-500">
+          <span>{sigCount} signature{sigCount !== 1 ? 's' : ''}</span>
+          <span className="text-gray-300">·</span>
+          <span>{stampCount} stamp{stampCount !== 1 ? 's' : ''} / seal{stampCount !== 1 ? 's' : ''}</span>
+          <span className="text-gray-300">·</span>
+          <span>{Object.keys(grouped).length} compan{Object.keys(grouped).length === 1 ? 'y' : 'ies'}</span>
+        </div>
+
+        {Object.entries(grouped).map(([company, items]) => (
+          <motion.div
+            key={company}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white rounded-xl border border-gray-200 p-5"
+          >
+            <div className="flex items-center gap-2 mb-4">
+              <Building2 className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+              <h3 className="text-[13px] font-semibold text-gray-800">{company}</h3>
+              <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                {items.length} item{items.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+
+            {/* Signatures row */}
+            {items.some((s) => s.element_type === 'signature') && (
+              <div className="mb-4">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Signatures</p>
+                <div className="flex flex-wrap gap-4">
+                  {items
+                    .filter((s) => s.element_type === 'signature')
+                    .map((sig) => (
+                      <SignatureTile key={sig.id} sig={sig} onClick={() => setLightbox(sig)} />
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* Stamps & seals row */}
+            {items.some((s) => s.element_type !== 'signature') && (
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Stamps & Seals</p>
+                <div className="flex flex-wrap gap-4">
+                  {items
+                    .filter((s) => s.element_type !== 'signature')
+                    .map((sig) => (
+                      <SignatureTile key={sig.id} sig={sig} onClick={() => setLightbox(sig)} />
+                    ))}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Lightbox */}
+      <AnimatePresence>
+        {lightbox && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setLightbox(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 cursor-pointer"
+          >
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.92, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl shadow-2xl overflow-hidden max-w-lg w-full cursor-default"
+            >
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <p className="text-[14px] font-semibold text-gray-900">
+                    {lightbox.person_name ?? lightbox.element_type}
+                  </p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {lightbox.company_name}
+                    {lightbox.signature_type && lightbox.signature_type !== 'unknown'
+                      ? ` · ${lightbox.signature_type}`
+                      : ''}
+                    {' · '}
+                    <span className="capitalize">{lightbox.element_type}</span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLightbox(null)}
+                  className="text-gray-400 hover:text-gray-700 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-6 bg-gray-50 flex items-center justify-center min-h-[180px]">
+                <img
+                  src={lightbox.storage_url ?? ''}
+                  alt={lightbox.person_name ?? lightbox.element_type}
+                  className="max-w-full max-h-[360px] object-contain drop-shadow-sm"
+                />
+              </div>
+              {lightbox.storage_url && (
+                <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+                  <a
+                    href={lightbox.storage_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[12px] text-blue-600 hover:underline"
+                  >
+                    Open full size
+                  </a>
+                  <span className="text-[10px] text-gray-400">Page {lightbox.page_number}</span>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
