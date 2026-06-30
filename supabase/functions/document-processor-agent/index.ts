@@ -16,6 +16,7 @@ export interface DocumentInput {
   base64: string;       // full data URI, e.g. "data:application/pdf;base64,..."
   fileName: string;
   clientText?: string;  // pre-extracted text from the client (digital PDFs)
+  firstPageImage?: string; // JPEG data URI of the first page, rendered client-side for PDFs
 }
 
 export interface DocumentResult {
@@ -725,13 +726,17 @@ async function extractVisualElements(
   base64DataUri: string,
   extractedText: string,
   apiKey: string,
+  firstPageImage?: string,
 ): Promise<VisualElements> {
   const mimeMatch = base64DataUri.match(/^data:([^;]+);base64,/);
   const isImage = (mimeMatch?.[1] ?? "").startsWith("image/");
 
+  // Use firstPageImage (client-rendered PDF page) or direct image for vision
+  const visionSource = firstPageImage ?? (isImage ? base64DataUri : null);
+
   try {
-    if (isImage) {
-      return await extractVisualElementsFromImage(base64DataUri, apiKey);
+    if (visionSource) {
+      return await extractVisualElementsFromImage(visionSource, apiKey);
     }
     return await extractVisualElementsFromText(extractedText, apiKey);
   } catch (_primaryErr) {
@@ -770,7 +775,7 @@ async function processOneDocument(doc: DocumentInput, mistralKey: string): Promi
     if (classification.category === "Board Resolution") {
       const [bdResult, veResult, smResult] = await Promise.allSettled([
         extractBoardResolutionDetails(extractedText, mistralKey),
-        extractVisualElements(doc.base64, extractedText, mistralKey),
+        extractVisualElements(doc.base64, extractedText, mistralKey, doc.firstPageImage),
         extractSigningMandates(extractedText, mistralKey),
       ]);
       boardResolutionDetails = bdResult.status === "fulfilled" ? bdResult.value : null;

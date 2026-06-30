@@ -244,14 +244,24 @@ export function DocumentProcessor() {
 
     // Build document inputs: extract client-side text for digital PDFs to save
     // an OCR round-trip; images and scanned PDFs go as raw base64 for Mistral OCR.
+    // Also render the first page of PDFs to JPEG so the edge function can run
+    // Pixtral vision on them and get accurate signature bounding boxes.
     const documentInputs = await Promise.all(
       selected.map(async (doc) => {
         const base64 = await fileToBase64(doc.file);
         let clientText = '';
+        let firstPageImage: string | undefined;
         if (doc.file.type === 'application/pdf') {
           clientText = await extractTextFromPDFClient(doc.file);
+          try {
+            const { convertPDFToImages } = await import('@/lib/pdfUtils');
+            const pages = await convertPDFToImages(doc.file, 100);
+            if (pages[0]) firstPageImage = pages[0];
+          } catch {
+            // first page render failed — edge function falls back to text extraction
+          }
         }
-        return { id: doc.id, base64, fileName: doc.file.name, clientText };
+        return { id: doc.id, base64, fileName: doc.file.name, clientText, firstPageImage };
       }),
     );
 
