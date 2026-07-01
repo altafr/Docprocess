@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, Users, CircleAlert as AlertCircle, FileX, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, X, ZoomIn } from 'lucide-react';
+import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, X, ZoomIn, UserCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
 import type { StoredSignature } from '@/lib/signatureUtils';
+import { AuthorizedSignatories } from './AuthorizedSignatories';
 
 export interface CompanyMandate {
   id: string;
@@ -102,6 +103,7 @@ type SortField = 'company_name' | 'director_name' | 'signing_arrangement' | 'eff
 // ---------------------------------------------------------------------------
 
 export function CompanyMandates() {
+  const [activeTab, setActiveTab] = useState<'mandates' | 'signatories'>('mandates');
   const [mandates, setMandates] = useState<CompanyMandate[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -192,6 +194,34 @@ export function CompanyMandates() {
           </button>
         </div>
       </div>
+
+      {/* Tab bar */}
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('mandates')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium border-b-2 transition-colors ${
+            activeTab === 'mandates'
+              ? 'border-[#DB0011] text-[#DB0011]'
+              : 'border-transparent text-gray-500 hover:text-gray-800'
+          }`}
+        >
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Mandates
+        </button>
+        <button
+          onClick={() => setActiveTab('signatories')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium border-b-2 transition-colors ${
+            activeTab === 'signatories'
+              ? 'border-[#DB0011] text-[#DB0011]'
+              : 'border-transparent text-gray-500 hover:text-gray-800'
+          }`}
+        >
+          <UserCheck className="h-3.5 w-3.5" />
+          Authorized Signatories List
+        </button>
+      </div>
+
+      {activeTab === 'mandates' && <>
 
       {/* Stats strip */}
       {mandates.length > 0 && (
@@ -328,6 +358,9 @@ export function CompanyMandates() {
           </motion.div>
         )}
       </AnimatePresence>
+      </>}
+
+      {activeTab === 'signatories' && <AuthorizedSignatories />}
     </div>
   );
 }
