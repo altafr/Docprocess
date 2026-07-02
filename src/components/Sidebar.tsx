@@ -1,7 +1,7 @@
 
 
 import { useState } from 'react';
-import { MessageSquare, Users, Languages, FileText, Settings, X, FolderSearch, ChartBar as BarChart2, Network, ScrollText, Tags, ShieldCheck, BookOpen, Search, GitBranch } from 'lucide-react';
+import { MessageSquare, Users, Languages, FileText, Settings, X, FolderSearch, ChartBar as BarChart2, Network, ScrollText, Tags, ShieldCheck, BookOpen, Search, GitBranch, LayoutGrid } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BRAND_RED } from '@/lib/constants';
 
@@ -26,6 +26,7 @@ const navItems = [
   { id: 'pipeline',          label: 'Processing Pipeline',  icon: Network },
   { id: 'promptlibrary',     label: 'Prompt Library',       icon: BookOpen },
   { id: 'knowledgesearch',   label: 'Knowledge Search',     icon: Search },
+  { id: 'dbdiagram',         label: 'DB Diagram',           icon: LayoutGrid },
 ];
 
 export function Sidebar({ activeTab, onTabChange, isOpen, onClose }: SidebarProps) {

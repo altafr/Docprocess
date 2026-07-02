@@ -16,6 +16,7 @@ import { CompanyMandates } from '@/components/screens/CompanyMandates';
 import { CompanyAnalysis } from '@/components/screens/CompanyAnalysis';
 import { PromptLibrary } from '@/components/screens/PromptLibrary';
 import { KnowledgeSearch } from '@/components/screens/KnowledgeSearch';
+import { DbDiagram } from '@/components/screens/DbDiagram';
 import { Toaster } from '@/components/ui/sonner';
 
 function App() {
@@ -50,6 +51,8 @@ function App() {
         return <PromptLibrary />;
       case 'knowledgesearch':
         return <KnowledgeSearch onNavigate={setActiveTab} />;
+      case 'dbdiagram':
+        return <DbDiagram />;
       case 'settings':
         return <Settings />;
       default:
