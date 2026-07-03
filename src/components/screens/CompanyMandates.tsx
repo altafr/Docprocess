@@ -1,17 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, X, ZoomIn, UserCheck } from 'lucide-react';
+import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, X, ZoomIn, UserCheck, Plus, Check, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import type { StoredSignature } from '@/lib/signatureUtils';
 import { AuthorizedSignatories } from './AuthorizedSignatories';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface AuthorizedProduct {
+  product: string;
+  account_numbers?: string[];
+}
 
 export interface CompanyMandate {
   id: string;
   company_name: string;
   director_name: string;
   title: string | null;
-  authorized_products: string[];
+  authorized_products: AuthorizedProduct[];
   signing_arrangement: 'sole' | 'joint' | 'any-two' | 'other' | 'unknown';
   signing_rules: string[];
   signature_type: 'wet-ink' | 'digital' | 'unknown';
@@ -24,9 +34,86 @@ export interface CompanyMandate {
   created_at: string;
 }
 
+// Predefined product options
+const PRODUCT_OPTIONS = [
+  'Opening of accounts',
+  'Operating signatories',
+  'Electronic/Internet Banking Services',
+  'Acceptance of Credit/General Facilities/Services',
+] as const;
+
+const PRODUCT_WITH_ACCOUNTS = 'Operating signatories';
+
+// Legacy product name to filter out
+const LEGACY_ALL_ACCOUNTS = 'All accounts';
+
 // ---------------------------------------------------------------------------
 // Helpers exported for testing
 // ---------------------------------------------------------------------------
+
+// Normalize products to new format (backward compatibility)
+// Filters out legacy "All accounts" tag and defaults to "Operating signatories" when empty
+export function normalizeProducts(products: unknown): AuthorizedProduct[] {
+  if (!Array.isArray(products) || products.length === 0) {
+    // Default to "Operating signatories" with no accounts
+    return [{ product: PRODUCT_WITH_ACCOUNTS, account_numbers: [] }];
+  }
+
+  // Check if it's old string[] format
+  if (typeof products[0] === 'string') {
+    const filtered = (products as string[])
+      .filter((p) => p !== LEGACY_ALL_ACCOUNTS)
+      .map((p) => {
+        const ap: AuthorizedProduct = { product: p };
+        if (p === PRODUCT_WITH_ACCOUNTS) {
+          ap.account_numbers = [];
+        }
+        return ap;
+      });
+    // If all were filtered out, default to Operating signatories
+    if (filtered.length === 0) {
+      return [{ product: PRODUCT_WITH_ACCOUNTS, account_numbers: [] }];
+    }
+    // Ensure Operating signatories exists with account_numbers
+    if (!filtered.some((p) => p.product === PRODUCT_WITH_ACCOUNTS)) {
+      filtered.push({ product: PRODUCT_WITH_ACCOUNTS, account_numbers: [] });
+    }
+    return filtered;
+  }
+
+  // Already new format - filter out legacy "All accounts"
+  const filtered = (products as AuthorizedProduct[])
+    .filter((p) => p.product !== LEGACY_ALL_ACCOUNTS);
+
+  if (filtered.length === 0) {
+    return [{ product: PRODUCT_WITH_ACCOUNTS, account_numbers: [] }];
+  }
+
+  // Ensure Operating signatories exists with account_numbers
+  if (!filtered.some((p) => p.product === PRODUCT_WITH_ACCOUNTS)) {
+    filtered.push({ product: PRODUCT_WITH_ACCOUNTS, account_numbers: [] });
+  }
+
+  return filtered;
+}
+
+// Convert to display format (filters out legacy "All accounts")
+export function productToDisplay(p: AuthorizedProduct): string {
+  if (p.product === LEGACY_ALL_ACCOUNTS) return '';
+  if (p.product === PRODUCT_WITH_ACCOUNTS && p.account_numbers?.length) {
+    return `${p.product} (${p.account_numbers.length} acct${p.account_numbers.length !== 1 ? 's' : ''})`;
+  }
+  return p.product;
+}
+
+// Convert to CSV format (filters out legacy "All accounts")
+export function productToCsv(p: AuthorizedProduct): string {
+  if (p.product === LEGACY_ALL_ACCOUNTS) return '';
+  if (p.product === PRODUCT_WITH_ACCOUNTS && p.account_numbers?.length) {
+    return `${p.product} (Accts: ${p.account_numbers.join(', ')})`;
+  }
+  return p.product;
+}
 
 export function buildMandateRows(mandates: CompanyMandate[]): CompanyMandate[] {
   return [...mandates].sort((a, b) => a.company_name.localeCompare(b.company_name));
@@ -49,17 +136,24 @@ export function exportMandatesToCsv(mandates: CompanyMandate[]): void {
     'Authorised Products', 'Signing Arrangement', 'Signature Type',
     'Effective Date', 'Expiry Date', 'Notes',
   ];
-  const rows = mandates.map((m) => [
-    m.company_name,
-    m.director_name,
-    m.title ?? '',
-    m.authorized_products.join('; '),
-    m.signing_arrangement,
-    m.signature_type,
-    m.effective_date ?? '',
-    m.expiry_date ?? '',
-    m.notes ?? '',
-  ]);
+  const rows = mandates.map((m) => {
+    const products = normalizeProducts(m.authorized_products);
+    const productStr = products
+      .map(productToCsv)
+      .filter((s) => s)
+      .join('; ');
+    return [
+      m.company_name,
+      m.director_name,
+      m.title ?? '',
+      productStr,
+      m.signing_arrangement,
+      m.signature_type,
+      m.effective_date ?? '',
+      m.expiry_date ?? '',
+      m.notes ?? '',
+    ];
+  });
   const csv = [headers, ...rows]
     .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
     .join('\n');
@@ -121,7 +215,14 @@ export function CompanyMandates() {
       .select('*')
       .order('company_name')
       .order('director_name');
-    if (!error && data) setMandates(data as CompanyMandate[]);
+    if (!error && data) {
+      // Normalize products to new format
+      const normalized = (data as CompanyMandate[]).map((m) => ({
+        ...m,
+        authorized_products: normalizeProducts(m.authorized_products),
+      }));
+      setMandates(normalized);
+    }
     setLoading(false);
   }, []);
 
@@ -145,11 +246,15 @@ export function CompanyMandates() {
       if (arrangementFilter !== 'All' && m.signing_arrangement !== arrangementFilter) return false;
       if (!search.trim()) return true;
       const q = search.toLowerCase();
+      const products = normalizeProducts(m.authorized_products);
       return (
         m.director_name.toLowerCase().includes(q) ||
         m.company_name.toLowerCase().includes(q) ||
         (m.title ?? '').toLowerCase().includes(q) ||
-        m.authorized_products.some((p) => p.toLowerCase().includes(q))
+        products.some((p) =>
+          p.product.toLowerCase().includes(q) ||
+          p.account_numbers?.some((a) => a.toLowerCase().includes(q))
+        )
       );
     })
     .sort((a, b) => {
@@ -427,14 +532,24 @@ function MandateRow({
         </td>
         <td className="px-4 py-3">
           <div className="flex flex-wrap gap-1 max-w-[200px]">
-            {m.authorized_products.slice(0, 2).map((p, i) => (
-              <span key={i} className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded border border-gray-200">
-                {p}
-              </span>
-            ))}
-            {m.authorized_products.length > 2 && (
-              <span className="text-[10px] text-gray-400">+{m.authorized_products.length - 2}</span>
-            )}
+            {(() => {
+              const products = normalizeProducts(m.authorized_products);
+              const displayProducts = products
+                .map((p) => productToDisplay(p))
+                .filter((s) => s);
+              return (
+                <>
+                  {displayProducts.slice(0, 2).map((label, i) => (
+                    <span key={i} className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded border border-gray-200">
+                      {label}
+                    </span>
+                  ))}
+                  {displayProducts.length > 2 && (
+                    <span className="text-[10px] text-gray-400">+{displayProducts.length - 2}</span>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </td>
         <td className="px-4 py-3">
@@ -492,7 +607,15 @@ function ExpandedMandateDetail({
   const [notesValue, setNotesValue] = useState(m.notes ?? '');
   const [editingArrangement, setEditingArrangement] = useState(false);
   const [signatures, setSignatures] = useState<StoredSignature[]>([]);
+  const [editingProducts, setEditingProducts] = useState(false);
+  const [localProducts, setLocalProducts] = useState<AuthorizedProduct[]>(() => normalizeProducts(m.authorized_products));
+  const [newAccountInput, setNewAccountInput] = useState<Record<string, string>>({});
   const notesRef = useRef<HTMLTextAreaElement>(null);
+
+  // Sync local products when mandate changes
+  useEffect(() => {
+    setLocalProducts(normalizeProducts(m.authorized_products));
+  }, [m.authorized_products]);
 
   useEffect(() => {
     supabase
@@ -515,6 +638,83 @@ function ExpandedMandateDetail({
     if (val !== m.signing_arrangement) {
       onUpdate({ signing_arrangement: val as CompanyMandate['signing_arrangement'] });
     }
+  };
+
+  // Product editing handlers
+  const toggleProduct = (productName: string) => {
+    setLocalProducts((prev) => {
+      const exists = prev.find((p) => p.product === productName);
+      if (exists) {
+        return prev.filter((p) => p.product !== productName);
+      } else {
+        const newProduct: AuthorizedProduct = { product: productName };
+        if (productName === PRODUCT_WITH_ACCOUNTS) {
+          newProduct.account_numbers = [];
+        }
+        return [...prev, newProduct];
+      }
+    });
+  };
+
+  const addAccountNumber = (productName: string) => {
+    const input = newAccountInput[productName]?.trim();
+    if (!input) return;
+
+    // Check for duplicates
+    const product = localProducts.find((p) => p.product === productName);
+    const existingAccounts = product?.account_numbers ?? [];
+    const isDuplicate = existingAccounts.some(
+      (acct) => acct.toLowerCase() === input.toLowerCase()
+    );
+
+    if (isDuplicate) {
+      // Clear input but don't add duplicate
+      setNewAccountInput((prev) => ({ ...prev, [productName]: '' }));
+      return;
+    }
+
+    setLocalProducts((prev) =>
+      prev.map((p) =>
+        p.product === productName
+          ? { ...p, account_numbers: [...(p.account_numbers ?? []), input] }
+          : p
+      )
+    );
+    setNewAccountInput((prev) => ({ ...prev, [productName]: '' }));
+  };
+
+  const removeAccountNumber = (productName: string, index: number) => {
+    setLocalProducts((prev) =>
+      prev.map((p) =>
+        p.product === productName
+          ? { ...p, account_numbers: p.account_numbers?.filter((_, i) => i !== index) }
+          : p
+      )
+    );
+  };
+
+  const saveProducts = () => {
+    setEditingProducts(false);
+    // Filter out legacy "All accounts" and clean up account numbers
+    const cleaned = localProducts
+      .filter((p) => p.product !== LEGACY_ALL_ACCOUNTS)
+      .map((p) => {
+        if (p.product === PRODUCT_WITH_ACCOUNTS) {
+          return { ...p, account_numbers: p.account_numbers?.filter((a) => a.trim()) ?? [] };
+        }
+        return p;
+      });
+    // Always keep Operating signatories (it's the default product)
+    if (!cleaned.some((p) => p.product === PRODUCT_WITH_ACCOUNTS)) {
+      cleaned.push({ product: PRODUCT_WITH_ACCOUNTS, account_numbers: [] });
+    }
+    onUpdate({ authorized_products: cleaned });
+  };
+
+  const cancelProducts = () => {
+    setEditingProducts(false);
+    setLocalProducts(normalizeProducts(m.authorized_products));
+    setNewAccountInput({});
   };
 
   return (
@@ -558,25 +758,27 @@ function ExpandedMandateDetail({
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-      {/* Signing rules */}
-      <div>
-        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Signing Rules</p>
-        {m.signing_rules.length > 0 ? (
-          <ul className="space-y-1.5">
-            {m.signing_rules.map((rule, i) => (
-              <li key={i} className="flex items-start gap-2">
-                <ChevronRight className="h-3 w-3 text-[#DB0011] mt-0.5 shrink-0" />
-                <span className="text-[12px] text-gray-700 leading-snug">{rule}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-[11px] text-gray-400 italic">No specific rules recorded.</p>
-        )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      {/* Left column: Signing rules + Arrangement */}
+      <div className="space-y-4">
+        <div>
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Signing Rules</p>
+          {m.signing_rules.length > 0 ? (
+            <ul className="space-y-1.5">
+              {m.signing_rules.map((rule, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <ChevronRight className="h-3 w-3 text-[#DB0011] mt-0.5 shrink-0" />
+                  <span className="text-[12px] text-gray-700 leading-snug">{rule}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[11px] text-gray-400 italic">No specific rules recorded.</p>
+          )}
+        </div>
 
         {/* Arrangement override */}
-        <div className="mt-3">
+        <div>
           <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Signing Arrangement</p>
           {editingArrangement ? (
             <select
@@ -601,36 +803,7 @@ function ExpandedMandateDetail({
         </div>
       </div>
 
-      {/* Products */}
-      <div>
-        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Authorised Products</p>
-        <div className="flex flex-wrap gap-1.5">
-          {m.authorized_products.length > 0
-            ? m.authorized_products.map((p, i) => (
-                <span key={i} className="text-[11px] px-2 py-0.5 bg-white text-gray-700 rounded border border-gray-200">
-                  {p}
-                </span>
-              ))
-            : <p className="text-[11px] text-gray-400 italic">None recorded.</p>
-          }
-        </div>
-
-        {m.source_resolution_ids.length > 0 && (
-          <div className="mt-3">
-            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
-              Source Resolutions ({m.source_resolution_ids.length})
-            </p>
-            <p className="text-[11px] text-gray-400">{m.source_resolution_ids.length} board resolution{m.source_resolution_ids.length !== 1 ? 's' : ''} processed</p>
-          </div>
-        )}
-
-        <div className="mt-3">
-          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Last Updated</p>
-          <p className="text-[11px] text-gray-500">{formatDate(m.last_updated.slice(0, 10)) ?? m.last_updated.slice(0, 10)}</p>
-        </div>
-      </div>
-
-      {/* Notes (editable) */}
+      {/* Right column: Notes */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Notes</p>
@@ -670,6 +843,152 @@ function ExpandedMandateDetail({
           </p>
         )}
       </div>
+      </div>
+
+      {/* Products - Full width below */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Authorised Products</p>
+          {!editingProducts && (
+            <button
+              onClick={() => setEditingProducts(true)}
+              className="text-[10px] text-blue-500 hover:text-blue-700 flex items-center gap-1"
+            >
+              <PenLine className="h-3 w-3" />
+              Edit
+            </button>
+          )}
+        </div>
+
+        {editingProducts ? (
+          <div className="space-y-3 bg-white border border-blue-200 rounded-lg p-3">
+            {/* Product checkboxes */}
+            <div className="space-y-2">
+              {PRODUCT_OPTIONS.map((productName) => {
+                const isSelected = localProducts.some((p) => p.product === productName);
+                const product = localProducts.find((p) => p.product === productName);
+
+                return (
+                  <div key={productName} className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleProduct(productName)}
+                        className="data-[state=checked]:bg-[#DB0011] data-[state=checked]:border-[#DB0011]"
+                      />
+                      <span className={`text-[12px] font-medium ${isSelected ? 'text-gray-900' : 'text-gray-500'}`}>
+                        {productName}
+                      </span>
+                    </label>
+
+                    {/* Account numbers for Operating signatories */}
+                    {productName === PRODUCT_WITH_ACCOUNTS && isSelected && (
+                      <div className="ml-6 space-y-2">
+                        {/* Existing account numbers as tags */}
+                        {product?.account_numbers && product.account_numbers.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {product.account_numbers.map((acct, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200"
+                              >
+                                {acct}
+                                <button
+                                  onClick={() => removeAccountNumber(productName, idx)}
+                                  className="hover:text-red-500 transition-colors"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Add new account number */}
+                        <div className="flex items-center gap-2">
+                          <Input
+                            placeholder="Enter account number"
+                            value={newAccountInput[productName] ?? ''}
+                            onChange={(e) => setNewAccountInput((prev) => ({ ...prev, [productName]: e.target.value }))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addAccountNumber(productName);
+                              }
+                            }}
+                            className="h-7 text-[11px] w-48"
+                          />
+                          <button
+                            onClick={() => addAccountNumber(productName)}
+                            disabled={!newAccountInput[productName]?.trim()}
+                            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            <Plus className="h-3 w-3" />
+                            Add
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-gray-400">
+                          Account numbers authorized for {m.company_name}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Save/Cancel buttons */}
+            <div className="flex gap-2 pt-2 border-t border-gray-100">
+              <button
+                onClick={saveProducts}
+                className="flex items-center gap-1 text-[11px] text-emerald-600 hover:text-emerald-700"
+              >
+                <Check className="h-3 w-3" />
+                Save
+              </button>
+              <button
+                onClick={cancelProducts}
+                className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600"
+              >
+                <XCircle className="h-3 w-3" />
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {(() => {
+              const displayProducts = localProducts
+                .map((p) => productToDisplay(p))
+                .filter((s) => s);
+              return displayProducts.length > 0 ? (
+                displayProducts.map((label, i) => (
+                  <span key={i} className="text-[11px] px-2 py-0.5 bg-white text-gray-700 rounded border border-gray-200">
+                    {label}
+                  </span>
+                ))
+              ) : (
+                <p className="text-[11px] text-gray-400 italic">None recorded.</p>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Source resolutions and last updated */}
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          {m.source_resolution_ids.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                Source Resolutions ({m.source_resolution_ids.length})
+              </p>
+              <p className="text-[11px] text-gray-400">{m.source_resolution_ids.length} board resolution{m.source_resolution_ids.length !== 1 ? 's' : ''} processed</p>
+            </div>
+          )}
+          <div>
+            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Last Updated</p>
+            <p className="text-[11px] text-gray-500">{formatDate(m.last_updated.slice(0, 10)) ?? m.last_updated.slice(0, 10)}</p>
+          </div>
+        </div>
       </div>
     </div>
   );
