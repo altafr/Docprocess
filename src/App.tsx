@@ -13,6 +13,7 @@ import { ProcessingPipeline } from '@/components/screens/ProcessingPipeline';
 import { BoardResolutions } from '@/components/screens/BoardResolutions';
 import { CategoryManager } from '@/components/screens/CategoryManager';
 import { CompanyMandates } from '@/components/screens/CompanyMandates';
+import { Companies } from '@/components/screens/Companies';
 import { CompanyAnalysis } from '@/components/screens/CompanyAnalysis';
 import { PromptLibrary } from '@/components/screens/PromptLibrary';
 import { KnowledgeSearch } from '@/components/screens/KnowledgeSearch';
@@ -43,6 +44,8 @@ function App() {
         return <BoardResolutions />;
       case 'companyMandates':
         return <CompanyMandates />;
+      case 'companies':
+        return <Companies />;
       case 'companyanalysis':
         return <CompanyAnalysis />;
       case 'categories':

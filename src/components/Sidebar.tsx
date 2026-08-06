@@ -1,7 +1,7 @@
 
 
 import { useState } from 'react';
-import { MessageSquare, Users, Languages, FileText, Settings, X, FolderSearch, ChartBar as BarChart2, Network, ScrollText, Tags, ShieldCheck, BookOpen, Search, GitBranch, LayoutGrid } from 'lucide-react';
+import { MessageSquare, Users, Languages, FileText, Settings, X, FolderSearch, ChartBar as BarChart2, Network, ScrollText, Tags, ShieldCheck, BookOpen, Search, GitBranch, LayoutGrid, Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BRAND_RED } from '@/lib/constants';
 
@@ -21,6 +21,7 @@ const navItems = [
   { id: 'usagelogs',         label: 'Usage Logs',           icon: BarChart2 },
   { id: 'boardresolutions',  label: 'Board Resolutions',    icon: ScrollText },
   { id: 'companyMandates',   label: 'Company Mandates',     icon: ShieldCheck },
+  { id: 'companies',         label: 'Companies',           icon: Building2 },
   { id: 'companyanalysis',   label: 'Company Analysis',     icon: GitBranch },
   { id: 'categories',        label: 'Document Categories',  icon: Tags },
   { id: 'pipeline',          label: 'Processing Pipeline',  icon: Network },
