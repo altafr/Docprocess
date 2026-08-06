@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, X, ZoomIn, UserCheck, Plus, Check, Trash2 } from 'lucide-react';
+import { Search, RefreshCw, Download, ChevronDown, ChevronUp, ShieldCheck, Building2, PenLine, CircleCheck as CheckCircle2, Circle as XCircle, ChevronRight, X, ZoomIn, UserCheck, Plus, Check, Trash2, FolderCog } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { StoredSignature } from '@/lib/signatureUtils';
 import { AuthorizedSignatories } from './AuthorizedSignatories';
+import { useCompanyGroups, filterByScope, type GroupScope, type CompanyGroup } from '@/hooks/use-company-groups';
+import { ManageGroupsModal } from './ManageGroupsModal';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,8 +46,12 @@ const PRODUCT_OPTIONS = [
 
 const PRODUCT_WITH_ACCOUNTS = 'Operating signatories';
 
-// Legacy product name to filter out
+// Legacy product name to filter out (case-insensitive — edge function used "All Accounts")
 const LEGACY_ALL_ACCOUNTS = 'All accounts';
+
+function isLegacyProduct(name: string): boolean {
+  return name.toLowerCase() === LEGACY_ALL_ACCOUNTS;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers exported for testing
@@ -62,7 +68,7 @@ export function normalizeProducts(products: unknown): AuthorizedProduct[] {
   // Check if it's old string[] format
   if (typeof products[0] === 'string') {
     const filtered = (products as string[])
-      .filter((p) => p !== LEGACY_ALL_ACCOUNTS)
+      .filter((p) => !isLegacyProduct(p))
       .map((p) => {
         const ap: AuthorizedProduct = { product: p };
         if (p === PRODUCT_WITH_ACCOUNTS) {
@@ -81,9 +87,9 @@ export function normalizeProducts(products: unknown): AuthorizedProduct[] {
     return filtered;
   }
 
-  // Already new format - filter out legacy "All accounts"
+  // Already new format - filter out legacy "All accounts" (case-insensitive)
   const filtered = (products as AuthorizedProduct[])
-    .filter((p) => p.product !== LEGACY_ALL_ACCOUNTS);
+    .filter((p) => !isLegacyProduct(p.product));
 
   if (filtered.length === 0) {
     return [{ product: PRODUCT_WITH_ACCOUNTS, account_numbers: [] }];
@@ -99,7 +105,7 @@ export function normalizeProducts(products: unknown): AuthorizedProduct[] {
 
 // Convert to display format (filters out legacy "All accounts")
 export function productToDisplay(p: AuthorizedProduct): string {
-  if (p.product === LEGACY_ALL_ACCOUNTS) return '';
+  if (isLegacyProduct(p.product)) return '';
   if (p.product === PRODUCT_WITH_ACCOUNTS && p.account_numbers?.length) {
     return `${p.product} (${p.account_numbers.length} acct${p.account_numbers.length !== 1 ? 's' : ''})`;
   }
@@ -108,7 +114,7 @@ export function productToDisplay(p: AuthorizedProduct): string {
 
 // Convert to CSV format (filters out legacy "All accounts")
 export function productToCsv(p: AuthorizedProduct): string {
-  if (p.product === LEGACY_ALL_ACCOUNTS) return '';
+  if (isLegacyProduct(p.product)) return '';
   if (p.product === PRODUCT_WITH_ACCOUNTS && p.account_numbers?.length) {
     return `${p.product} (Accts: ${p.account_numbers.join(', ')})`;
   }
@@ -201,8 +207,12 @@ export function CompanyMandates() {
   const [mandates, setMandates] = useState<CompanyMandate[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [companyFilter, setCompanyFilter] = useState('All');
+  const [scope, setScope] = useState<GroupScope>('all');
+  const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [arrangementFilter, setArrangementFilter] = useState('All');
+  const [manageGroupsOpen, setManageGroupsOpen] = useState(false);
+  const { groups, fetchGroups } = useCompanyGroups();
   const [sortField, setSortField] = useState<SortField>('company_name');
   const [sortAsc, setSortAsc] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -237,12 +247,12 @@ export function CompanyMandates() {
     }
   }, [fetchMandates]);
 
-  const companies = ['All', ...Array.from(new Set(mandates.map((m) => m.company_name))).sort()];
+  const companies = Array.from(new Set(mandates.map((m) => m.company_name))).sort();
   const arrangements = ['All', 'sole', 'joint', 'any-two', 'other', 'unknown'];
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId) ?? null;
 
-  const filtered = mandates
+  const filtered = filterByScope(mandates, scope, selectedCompany, selectedGroup)
     .filter((m) => {
-      if (companyFilter !== 'All' && m.company_name !== companyFilter) return false;
       if (arrangementFilter !== 'All' && m.signing_arrangement !== arrangementFilter) return false;
       if (!search.trim()) return true;
       const q = search.toLowerCase();
@@ -262,6 +272,12 @@ export function CompanyMandates() {
       const vb = String(b[sortField] ?? '');
       return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
     });
+
+  const scopeCompanyCount = scope === 'group' && selectedGroup
+    ? selectedGroup.member_companies.length
+    : scope === 'company' && selectedCompany
+      ? 1
+      : companies.length;
 
   const handleSort = (field: SortField) => {
     if (sortField === field) setSortAsc((v) => !v);
@@ -332,15 +348,15 @@ export function CompanyMandates() {
       {mandates.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard label="Total Mandates" value={mandates.length} color="text-gray-900" />
-          <StatCard label="Companies" value={companies.length - 1} color="text-blue-700" />
+          <StatCard label="Companies" value={companies.length} color="text-blue-700" />
           <StatCard label="Expiring Soon" value={expiringSoonCount} color="text-amber-600" />
           <StatCard label="Expired" value={expiredCount} color="text-red-600" />
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
+      {/* Scope + Filters */}
+      <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <Input
             placeholder="Search director, company, product..."
@@ -349,13 +365,64 @@ export function CompanyMandates() {
             className="pl-9 h-9 text-[13px] border-gray-200"
           />
         </div>
-        <select
-          value={companyFilter}
-          onChange={(e) => setCompanyFilter(e.target.value)}
-          className="h-9 text-[13px] border border-gray-200 rounded-lg px-3 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#DB0011]/20"
+
+        {/* Scope toggle */}
+        <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden h-9">
+          {(['all', 'group', 'company'] as GroupScope[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                setScope(s);
+                if (s !== 'company') setSelectedCompany(null);
+                if (s !== 'group') setSelectedGroupId(null);
+              }}
+              className={`px-3 h-full text-[12px] font-medium transition-colors ${
+                scope === s
+                  ? 'bg-[#DB0011] text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {s === 'all' ? 'All' : s === 'group' ? 'Group' : 'Company'}
+            </button>
+          ))}
+        </div>
+
+        {/* Dependent dropdown */}
+        {scope === 'company' && (
+          <select
+            value={selectedCompany ?? ''}
+            onChange={(e) => setSelectedCompany(e.target.value || null)}
+            className="h-9 text-[13px] border border-gray-200 rounded-lg px-3 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#DB0011]/20"
+          >
+            <option value="">Select company…</option>
+            {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        {scope === 'group' && (
+          <select
+            value={selectedGroupId ?? ''}
+            onChange={(e) => setSelectedGroupId(e.target.value || null)}
+            className="h-9 text-[13px] border border-gray-200 rounded-lg px-3 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#DB0011]/20"
+          >
+            <option value="">Select group…</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.group_code ? `${g.group_code} · ` : ''}{g.group_name} ({g.member_companies.length})
+              </option>
+            ))}
+          </select>
+        )}
+
+        {/* Manage Groups button */}
+        <button
+          onClick={() => setManageGroupsOpen(true)}
+          className="flex items-center gap-1.5 text-[12px] text-gray-600 hover:text-gray-900 px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors h-9"
+          title="Create, edit, or delete company groups"
         >
-          {companies.map((c) => <option key={c}>{c}</option>)}
-        </select>
+          <FolderCog className="h-3.5 w-3.5" />
+          Manage Groups
+        </button>
+
         <select
           value={arrangementFilter}
           onChange={(e) => setArrangementFilter(e.target.value)}
@@ -366,6 +433,17 @@ export function CompanyMandates() {
           ))}
         </select>
       </div>
+
+      {/* Scope summary */}
+      {mandates.length > 0 && scope !== 'all' && (
+        <p className="text-[11px] text-gray-500">
+          Showing <span className="font-semibold text-gray-700">{filtered.length}</span> mandate{filtered.length !== 1 ? 's' : ''}
+          {' '}across <span className="font-semibold text-gray-700">{scopeCompanyCount}</span> compan{scopeCompanyCount !== 1 ? 'ies' : 'y'}
+          {scope === 'group' && selectedGroup ? ` in ${selectedGroup.group_name}` : ''}
+          {scope === 'company' && selectedCompany ? ` in ${selectedCompany}` : ''}
+          .
+        </p>
+      )}
 
       {/* Table */}
       {loading ? (
@@ -466,6 +544,15 @@ export function CompanyMandates() {
       </>}
 
       {activeTab === 'signatories' && <AuthorizedSignatories />}
+
+      <ManageGroupsModal
+        open={manageGroupsOpen}
+        onOpenChange={(o) => {
+          setManageGroupsOpen(o);
+          if (!o) fetchGroups();
+        }}
+        availableCompanies={companies}
+      />
     </div>
   );
 }
@@ -697,7 +784,7 @@ function ExpandedMandateDetail({
     setEditingProducts(false);
     // Filter out legacy "All accounts" and clean up account numbers
     const cleaned = localProducts
-      .filter((p) => p.product !== LEGACY_ALL_ACCOUNTS)
+      .filter((p) => !isLegacyProduct(p.product))
       .map((p) => {
         if (p.product === PRODUCT_WITH_ACCOUNTS) {
           return { ...p, account_numbers: p.account_numbers?.filter((a) => a.trim()) ?? [] };

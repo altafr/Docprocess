@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Plus, Trash2, X, FileText, ZoomIn, RotateCcw, UserCheck } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, X, FileText, ZoomIn, RotateCcw, UserCheck, Search, UserCog } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
+import { useCompanyGroups, filterSignatoriesByScope, type GroupScope, type CompanyGroup } from '@/hooks/use-company-groups';
 import type { CompanyMandate } from './CompanyMandates';
+import { BulkUpdateModal } from './BulkUpdateModal';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -11,6 +14,7 @@ import type { CompanyMandate } from './CompanyMandates';
 
 export interface AuthorizedSignatory {
   id: string;
+  signatory_display_id: string | null;
   director_name_key: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -259,12 +263,14 @@ function SignatoryRow({
   boardResolutions,
   onUpdate,
   onDelete,
+  onBulkUpdate,
 }: {
   signatory: AuthorizedSignatory;
   index: number;
   boardResolutions: BoardResolutionRef[];
   onUpdate: (patch: Partial<AuthorizedSignatory>) => void;
   onDelete: () => void;
+  onBulkUpdate: () => void;
 }) {
   const [showResolutions, setShowResolutions] = useState(false);
   const [hovering, setHovering] = useState(false);
@@ -284,6 +290,13 @@ function SignatoryRow({
         onMouseLeave={() => setHovering(false)}
         className="border-b border-gray-100 hover:bg-gray-50/40 transition-colors group"
       >
+        {/* Display ID */}
+        <td className="px-3 py-2 whitespace-nowrap">
+          <span className="text-[10px] font-mono px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded border border-gray-200">
+            {s.signatory_display_id ?? '—'}
+          </span>
+        </td>
+
         {/* First name */}
         <td className="px-3 py-2 min-w-[110px]">
           <EditableCell value={s.first_name} onSave={save('first_name')} placeholder="First name" />
@@ -337,12 +350,19 @@ function SignatoryRow({
         {/* Related companies */}
         <td className="px-3 py-2 min-w-[160px]">
           {s.related_companies.length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {s.related_companies.map((c, i) => (
-                <span key={i} className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100 whitespace-nowrap">
-                  {c}
+            <div className="flex flex-col gap-1">
+              {s.related_companies.length > 1 && (
+                <span className="text-[9px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded w-fit border border-blue-100">
+                  {s.related_companies.length} companies
                 </span>
-              ))}
+              )}
+              <div className="flex flex-wrap gap-1">
+                {s.related_companies.map((c, i) => (
+                  <span key={i} className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100 whitespace-nowrap">
+                    {c}
+                  </span>
+                ))}
+              </div>
             </div>
           ) : (
             <span className="text-[11px] text-gray-300 px-1">—</span>
@@ -372,20 +392,32 @@ function SignatoryRow({
           )}
         </td>
 
-        {/* Delete */}
-        <td className="px-2 py-2 w-10">
-          <AnimatePresence>
-            {hovering && (
-              <motion.button
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                onClick={onDelete}
-                className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
-                title="Delete signatory"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </motion.button>
-            )}
-          </AnimatePresence>
+        {/* Actions: bulk update + delete */}
+        <td className="px-2 py-2 w-20">
+          <div className="flex items-center gap-0.5">
+            <AnimatePresence>
+              {hovering && (
+                <>
+                  <motion.button
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    onClick={onBulkUpdate}
+                    className="p-1 rounded hover:bg-blue-50 text-gray-300 hover:text-blue-600 transition-colors"
+                    title="Bulk update this signer across mandates"
+                  >
+                    <UserCog className="h-3.5 w-3.5" />
+                  </motion.button>
+                  <motion.button
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    onClick={onDelete}
+                    className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 transition-colors"
+                    title="Delete signatory"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </motion.button>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
         </td>
       </motion.tr>
 
@@ -411,7 +443,13 @@ export function AuthorizedSignatories() {
   const [boardResolutions, setBoardResolutions] = useState<BoardResolutionRef[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [search, setSearch] = useState('');
+  const [scope, setScope] = useState<GroupScope>('all');
+  const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [bulkUpdateTarget, setBulkUpdateTarget] = useState<AuthorizedSignatory | null>(null);
   const { toast } = useToast();
+  const { groups, fetchGroups } = useCompanyGroups();
 
   const fetchSignatories = useCallback(async () => {
     setLoading(true);
@@ -425,6 +463,7 @@ export function AuthorizedSignatories() {
   }, []);
 
   useEffect(() => { fetchSignatories(); }, [fetchSignatories]);
+  useEffect(() => { fetchGroups(); }, [fetchGroups]);
 
   const updateSignatory = useCallback(async (id: string, patch: Partial<AuthorizedSignatory>) => {
     setSignatories((prev) => prev.map((s) => s.id === id ? { ...s, ...patch } : s));
@@ -523,6 +562,26 @@ export function AuthorizedSignatories() {
     }
   }, [fetchSignatories, toast]);
 
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId) ?? null;
+
+  const allCompanies = useMemo(
+    () => Array.from(new Set(signatories.flatMap((s) => s.related_companies))).sort(),
+    [signatories],
+  );
+
+  const filteredSignatories = useMemo(() => {
+    const scoped = filterSignatoriesByScope(signatories, scope, selectedCompany, selectedGroup);
+    if (!search.trim()) return scoped;
+    const q = search.toLowerCase();
+    return scoped.filter((s) =>
+      (s.director_name_key ?? '').toLowerCase().includes(q) ||
+      (s.first_name ?? '').toLowerCase().includes(q) ||
+      (s.last_name ?? '').toLowerCase().includes(q) ||
+      (s.id_number ?? '').toLowerCase().includes(q) ||
+      (s.email_address ?? '').toLowerCase().includes(q),
+    );
+  }, [signatories, scope, selectedCompany, selectedGroup, search]);
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -567,11 +626,73 @@ export function AuthorizedSignatories() {
         {' '}All other fields require manual entry by operations staff.
       </p>
 
+      {/* Search + scope filter */}
+      <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search by name, ID number, or email..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9 text-[13px] border-gray-200"
+          />
+        </div>
+        <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden h-9">
+          {(['all', 'group', 'company'] as GroupScope[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                setScope(s);
+                if (s !== 'company') setSelectedCompany(null);
+                if (s !== 'group') setSelectedGroupId(null);
+              }}
+              className={`px-3 h-full text-[12px] font-medium transition-colors ${
+                scope === s
+                  ? 'bg-[#DB0011] text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {s === 'all' ? 'All' : s === 'group' ? 'Group' : 'Company'}
+            </button>
+          ))}
+        </div>
+        {scope === 'company' && (
+          <select
+            value={selectedCompany ?? ''}
+            onChange={(e) => setSelectedCompany(e.target.value || null)}
+            className="h-9 text-[13px] border border-gray-200 rounded-lg px-3 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#DB0011]/20"
+          >
+            <option value="">Select company…</option>
+            {allCompanies.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        {scope === 'group' && (
+          <select
+            value={selectedGroupId ?? ''}
+            onChange={(e) => setSelectedGroupId(e.target.value || null)}
+            className="h-9 text-[13px] border border-gray-200 rounded-lg px-3 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#DB0011]/20"
+          >
+            <option value="">Select group…</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.group_code ? `${g.group_code} · ` : ''}{g.group_name} ({g.member_companies.length})
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
       {/* Table */}
       {loading ? (
         <LoadingSignatoriesSkeleton />
       ) : signatories.length === 0 ? (
         <EmptySignatoriesState onSync={syncFromMandates} onAdd={addSignatory} syncing={syncing} />
+      ) : filteredSignatories.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-gray-400 bg-white rounded-xl border border-gray-200">
+          <Search className="h-8 w-8 mb-2 opacity-20" />
+          <p className="text-[13px] font-medium text-gray-500">No signatories match your filters</p>
+          <p className="text-[11px] mt-1 text-gray-400">Try clearing the search or changing the scope.</p>
+        </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
@@ -579,7 +700,7 @@ export function AuthorizedSignatories() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   {[
-                    'First Name', 'Last Name', 'ID Type', 'ID Number', 'ID Expiry',
+                    'ID', 'First Name', 'Last Name', 'ID Type', 'ID Number', 'ID Expiry',
                     'Nationality', 'Signature', 'Email Address', 'Residential Address',
                     'Date of Birth', 'Companies', 'Board Resolution', '',
                   ].map((h) => (
@@ -594,7 +715,7 @@ export function AuthorizedSignatories() {
               </thead>
               <tbody>
                 <AnimatePresence>
-                  {signatories.map((s, i) => (
+                  {filteredSignatories.map((s, i) => (
                     <SignatoryRow
                       key={s.id}
                       signatory={s}
@@ -602,6 +723,7 @@ export function AuthorizedSignatories() {
                       boardResolutions={boardResolutions}
                       onUpdate={(patch) => updateSignatory(s.id, patch)}
                       onDelete={() => deleteSignatory(s.id)}
+                      onBulkUpdate={() => setBulkUpdateTarget(s)}
                     />
                   ))}
                 </AnimatePresence>
@@ -610,6 +732,13 @@ export function AuthorizedSignatories() {
           </div>
         </div>
       )}
+
+      <BulkUpdateModal
+        signatory={bulkUpdateTarget}
+        open={!!bulkUpdateTarget}
+        onOpenChange={(o) => { if (!o) setBulkUpdateTarget(null); }}
+        onApplied={fetchSignatories}
+      />
     </div>
   );
 }

@@ -533,7 +533,7 @@ Respond ONLY with this JSON (no other text):
 Rules:
 - personName: full name as written in the resolution
 - title: Director, Chairman, CEO, Authorised Signatory, Company Secretary, etc.
-- authorizedProducts: banking products/accounts they are authorised for, e.g. "Current Account","FX Transactions","Trade Finance","All Accounts","Internet Banking","Letters of Credit". Use ["All Accounts"] if the resolution grants general banking authority or does not specify. NEVER leave this empty — default to ["All Accounts"].
+- authorizedProducts: banking products/accounts they are authorised for, e.g. "Current Account","FX Transactions","Trade Finance","Internet Banking","Letters of Credit". Do NOT include generic terms like "All Accounts" or "All accounts" — if the resolution grants general banking authority, use ["Operating signatories"]. NEVER leave this empty — default to ["Operating signatories"].
 - signingArrangement: "sole" (can sign alone), "joint" (must sign with a specific named person), "any-two" (any two signatories from the authorised list), "other", "unknown"
 - signingRules: any specific conditions, transaction limits, or restrictions stated in the resolution, as plain-English strings
 - effectiveDate / expiryDate: ISO date strings if stated, otherwise null
@@ -562,9 +562,11 @@ Rules:
           .map((m: any) => ({
             personName: toStr(m.personName)!,
             title: toStr(m.title) || null,
-            authorizedProducts: toStringArray(m.authorizedProducts).length > 0
-              ? toStringArray(m.authorizedProducts)
-              : ["All Accounts"],
+            authorizedProducts: toStringArray(m.authorizedProducts)
+              .filter((p) => p.toLowerCase() !== "all accounts")
+              .length > 0
+              ? toStringArray(m.authorizedProducts).filter((p) => p.toLowerCase() !== "all accounts")
+              : ["Operating signatories"],
             signingArrangement: VALID_ARRANGEMENTS.includes(m.signingArrangement)
               ? m.signingArrangement
               : "unknown",
