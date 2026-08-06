@@ -134,6 +134,7 @@ const TABLES: TableDef[] = [
       { name: 'authorized_persons', type: 'jsonb' },
       { name: 'effective_date', type: 'text', nullable: true },
       { name: 'expiry_date', type: 'text', nullable: true },
+      { name: 'company_id', type: 'uuid', kind: 'fk', nullable: true, note: '→ companies' },
       { name: 'full_text', type: 'text', nullable: true },
       { name: 'confidence', type: 'numeric(4,3)', nullable: true },
       { name: 'visual_elements', type: 'jsonb', nullable: true },
@@ -162,6 +163,42 @@ const TABLES: TableDef[] = [
     ],
   },
   {
+    id: 'companies',
+    name: 'companies',
+    color: '#DB0011',
+    group: 'Mandates',
+    columns: [
+      { name: 'id', type: 'uuid', kind: 'pk' },
+      { name: 'company_code', type: 'text', kind: 'uk', note: 'Auto-generated CMP-001' },
+      { name: 'company_name', type: 'text', kind: 'uk' },
+      { name: 'legal_entity_type', type: 'text', nullable: true },
+      { name: 'cin_number', type: 'text', nullable: true, note: 'Corporate Identification Number' },
+      { name: 'legal_entity_identifier', type: 'text', nullable: true, note: 'LEI' },
+      { name: 'other_identifier', type: 'text', nullable: true },
+      { name: 'country_of_incorporation', type: 'text', nullable: true },
+      { name: 'top50', type: 'boolean', note: 'Top 50 company flag' },
+      { name: 'created_at', type: 'timestamptz' },
+      { name: 'updated_at', type: 'timestamptz' },
+    ],
+  },
+  {
+    id: 'company_signatories',
+    name: 'company_signatories (view)',
+    color: '#DB0011',
+    group: 'Mandates',
+    columns: [
+      { name: 'company_id', type: 'uuid', note: '→ companies.id' },
+      { name: 'company_code', type: 'text', nullable: true },
+      { name: 'company_name', type: 'text' },
+      { name: 'signatory_id', type: 'uuid', note: '→ authorized_signatories.id' },
+      { name: 'signatory_display_id', type: 'text', nullable: true },
+      { name: 'director_name_key', type: 'text', nullable: true },
+      { name: 'first_name', type: 'text', nullable: true },
+      { name: 'last_name', type: 'text', nullable: true },
+      { name: 'mandate_title', type: 'text', nullable: true },
+    ],
+  },
+  {
     id: 'company_groups',
     name: 'company_groups',
     color: '#DB0011',
@@ -182,6 +219,7 @@ const TABLES: TableDef[] = [
     group: 'Mandates',
     columns: [
       { name: 'id', type: 'uuid', kind: 'pk' },
+      { name: 'company_id', type: 'uuid', kind: 'fk', nullable: true, note: '→ companies' },
       { name: 'company_name', type: 'text' },
       { name: 'director_name', type: 'text' },
       { name: 'title', type: 'text', nullable: true },
@@ -229,6 +267,8 @@ const TABLES: TableDef[] = [
 const RELATIONS: RelationDef[] = [
   { from: 'processed_documents', fromCol: 'board_resolution_id', to: 'board_resolutions', toCol: 'id', label: 'SET NULL' },
   { from: 'document_signatures', fromCol: 'board_resolution_id', to: 'board_resolutions', toCol: 'id', label: 'CASCADE' },
+  { from: 'company_mandates', fromCol: 'company_id', to: 'companies', toCol: 'id', label: 'SET NULL' },
+  { from: 'board_resolutions', fromCol: 'company_id', to: 'companies', toCol: 'id', label: 'SET NULL' },
 ];
 
 const GROUPS: Record<string, { color: string; desc: string }> = {
@@ -523,7 +563,8 @@ export function DbDiagram() {
             <span className="font-semibold text-gray-700">Soft relations (via JSONB / text arrays):</span>
             {' '}company_mandates.source_resolution_ids and authorized_signatories.source_resolution_ids
             reference board_resolutions.id &middot; company_mandates UNIQUE(company_name, director_name)
-            links logically to authorized_signatories.director_name_key
+            links logically to authorized_signatories.director_name_key &middot; company_signatories view
+            joins companies → company_mandates → authorized_signatories
           </p>
         </div>
       </div>
