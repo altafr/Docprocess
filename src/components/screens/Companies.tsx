@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Search, Building2, ChevronDown, ChevronUp, TriangleAlert as AlertTriangle } from 'lucide-react';
+import { RefreshCw, Search, Building2, ChevronDown, ChevronUp, TriangleAlert as AlertTriangle, Award } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
 
@@ -17,6 +17,7 @@ export interface Company {
   legal_entity_identifier: string | null;
   other_identifier: string | null;
   country_of_incorporation: string | null;
+  top50: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -199,6 +200,12 @@ function CompanyRow({
         <td className="px-3 py-2 min-w-[160px]">
           <div className="flex items-center gap-1.5">
             <EditableCell value={company.company_name} onSave={save('company_name')} placeholder="Unnamed company" />
+            {company.top50 && (
+              <span title="Top 50 company" className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 whitespace-nowrap">
+                <Award className="h-2.5 w-2.5" />
+                TOP 50
+              </span>
+            )}
             {hasNameIssue && (
               <span title="Name may have leaked from a document — consider renaming" className="shrink-0">
                 <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
@@ -232,6 +239,21 @@ function CompanyRow({
           <EditableCell value={company.country_of_incorporation} onSave={save('country_of_incorporation')} placeholder="—" />
         </td>
 
+        {/* Top 50 toggle */}
+        <td className="px-3 py-2 whitespace-nowrap">
+          <button
+            onClick={() => onUpdate({ top50: !company.top50 })}
+            title={company.top50 ? 'Remove Top 50 flag' : 'Mark as Top 50'}
+            className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${
+              company.top50
+                ? 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200'
+                : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
+            }`}
+          >
+            {company.top50 ? 'Top 50' : 'Mark'}
+          </button>
+        </td>
+
         {/* Signatory count */}
         <td className="px-3 py-2 whitespace-nowrap">
           <button
@@ -256,7 +278,7 @@ function CompanyRow({
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.15 }}
           >
-            <td colSpan={8} className="px-3 py-3 bg-gray-50/60 border-b border-gray-100">
+            <td colSpan={9} className="px-3 py-3 bg-gray-50/60 border-b border-gray-100">
               {signatories.length === 0 ? (
                 <p className="text-[12px] text-gray-400 italic px-2">
                   No signatories linked to this company yet.
@@ -435,7 +457,7 @@ export function Companies() {
             <table className="w-full border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  {['Code', 'Company Name', 'Entity Type', 'CIN Number', 'LEI', 'Other ID', 'Country', 'Signatories'].map((h) => (
+                  {['Code', 'Company Name', 'Entity Type', 'CIN Number', 'LEI', 'Other ID', 'Country', 'Top 50', 'Signatories'].map((h) => (
                     <th
                       key={h}
                       className="text-left px-3 py-2.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap"

@@ -30,6 +30,7 @@ function makeCompany(overrides: Partial<Company> = {}): Company {
     legal_entity_identifier: null,
     other_identifier: null,
     country_of_incorporation: null,
+    top50: false,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
     ...overrides,
